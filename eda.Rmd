@@ -1,0 +1,18 @@
+---
+title: "eda"
+author: "Qingyang Zhang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r import_data_packages}
+library(tidyverse)
+caaspp22 <- read_csv('data/caaspp.csv')
+```
+```{r data_inspection}
+```
