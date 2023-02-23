@@ -10,9 +10,248 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-```{r import_data_packages}
+# import data
+
+For more data field references: https://caaspp-elpac.ets.org/caaspp/ResearchFileFormatSB?ps=true&lstTestYear=2022&lstTestType=B
+
+```{r importing_packages}
 library(tidyverse)
-caaspp22 <- read_csv('data/caaspp.csv')
+library(readxl)
+library(Hmisc) #https://CRAN.R-project.org/package=Hmisc
+library(stargazer)
+library(RANN)
 ```
-```{r data_inspection}
+
+```{r loading_data}
+caaspp22 <- read.table('data/caaspp.txt',sep='^', header=TRUE)
+student_groups <- read_excel('data/lookup.xlsx', sheet = "student_groups")
+entities <- read_csv('data/entities.csv')
+ravenswood <- read_csv('data/rvsw.csv') 
+bh <- read_csv('data/bh.csv') 
+```
+
+```{r exporting}
+#ravenswood <- caaspp22 %>% filter(District.Code=='68999')
+#write.csv(ravenswood,file='data/rvsw.csv')
+#bh <- caaspp22 %>% filter(School.Code=='6044309')
+#write.csv(bh,file='data/bh.csv')
+```
+
+
+### on school data
+
+---
+We sample the records of the Belle Haven Elementary School ELA test results as the toy data set to explore for data wrangling. 
+
+🛑 Decision To Be Done:
+* what variable to choose as the number of students when calculating the proportion of student composition for each student subgroup (consider that there could be slight difference across subjects for tested-related variables) 🅰  use `students.tested`
+* how to handle missing values for certain student subgroup use? 
+* to what level of granularity of student subgroup we are going to use 🅰 ignore two-level first
+
+```{r}
+select_cols <- c('Student.Group.ID',
+                      'Total.Tested.at.Reporting.Level', 
+                      'Total.Tested.with.Scores.at.Reporting.Level', 
+                      'Students.Enrolled', 
+                      'Students.Tested')
+bh_allgrades <- bh %>% 
+    # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy
+    filter(Grade==13 & Test.ID==1) %>%
+    select(all_of(select_cols)) %>%
+    left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
+    rename("Demographic.ID.Num" = "Demographic ID Num",
+           "Demographic.Name" = "Demographic Name",
+           "Student.Group" = "Student Group")
+```
+
+##### Assume using 'Students.Tested'
+With respect to what variable to use as the number of students when calculating the proportion of student composition for each student subgroup, for simplicity, we use `Students.Tested` for EDA and detailed illustrations. We observe that 
+* there are 12 ways of describing subgroups, and in total 45 subgroups
+* there are missing data, marked as `*`, which seems to differ from 0. e.g.
+  
+  0	|American Indian or Alaska Native	| Race and Ethnicity
+
+  \* |	Filipino	| Race and Ethnicity
+  
+```{r}
+bh_allgrades_a <- bh_allgrades %>%
+    select(c('Students.Tested', 'Demographic.ID.Num', 'Demographic.Name', 'Student.Group'))
+bh_allgrades_a %>%
+    count(Student.Group) %>%
+    pivot_wider(names_from = Student.Group, values_from = n)
+```
+
+
+##### Assume replace missing value with 0
+```{r }
+bh_allgrades_a <- bh_allgrades_a %>%
+    # notice NAs will be introduced by coercion
+    mutate_at('Students.Tested', as.numeric) %>%
+    # replace NA with 0
+    replace_na(list(Students.Tested = 0)) 
+```
+
+```{r}
+bh_allgrades_a <- bh_allgrades_a %>% 
+    # create a new column for percentage 
+    mutate(Perc = Students.Tested / max(bh_allgrades_a$Students.Tested)*100) %>%
+    mutate(Student.Group.Desc = paste(Demographic.ID.Num, Demographic.Name, Student.Group, sep = '_'))
+```
+
+```{r}
+bh_allgrades_a %>% 
+    select(c('Student.Group.Desc', 'Perc')) %>%
+    pivot_wider(names_from = Student.Group.Desc, values_from = Perc)
+```
+
+### on district data
+
+```{r ravenswood}
+
+select_cols <- c('School.Code',
+                  'Student.Group.ID',
+                  'Students.Tested')
+
+select_groups <- c(1, 128, 31, 170, 75, 76, 74, 77, 78, 79, 80, 144, 4, 90, 121)
+
+ravenswood_s <- ravenswood %>% 
+    # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy
+    filter(Grade==13 & Test.ID==1) %>%
+    select(all_of(select_cols)) %>%
+    filter(Student.Group.ID %in% select_groups) %>%
+    left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
+    rename("Demographic.ID.Num" = "Demographic ID Num",
+           "Demographic.Name" = "Demographic Name") %>%
+    select(all_of(c('School.Code',
+                  'Students.Tested',
+                  'Demographic.Name'))) %>%
+    pivot_wider(names_from = School.Code, values_from = 'Students.Tested')
+                  #'Demographic.Name'))
+ravenswood_s
+
+#latexTabular(format.df(ravenswood_s))
+#write.csv(ravenswood_s ,file='data/rvsw_agg.csv')
+```
+
+### on full data
+
+```{r full-data}
+caaspp22_ela_pivoted <- caaspp22 %>% 
+    # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy,
+    filter(Grade==13 & Test.ID==1) %>%
+    # Type.ID 7 means public schools
+    filter(Type.ID==7 | Type.ID==9 | Type.ID==10) %>%
+    select(all_of(select_cols)) %>%
+    filter(Student.Group.ID %in% select_groups) %>%
+    left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
+    rename("Demographic.ID.Num" = "Demographic ID Num",
+           "Demographic.Name" = "Demographic Name") %>%
+    select(all_of(c('School.Code',
+                  'Students.Tested',
+                  'Demographic.Name'))) %>%
+    pivot_wider(names_from = Demographic.Name, values_from = 'Students.Tested')
+```
+
+
+```{r full-data-missing-val}
+caaspp22_ela_filled <- data.frame(caaspp22_ela_pivoted)
+caaspp22_ela_filled[caaspp22_ela_filled=='*'] <- '1'
+caaspp22_ela_filled[is.na(caaspp22_ela_filled)] <- '0'
+caaspp22_ela_filled <- caaspp22_ela_filled %>% mutate_if(is.character, as.numeric)
+```
+
+
+```{r }
+col_names <- names(caaspp22_ela_filled)[3:length(names(caaspp22_ela_filled))]
+for (col_name in col_names) {
+  name <- paste0('Perc.', col_name)
+  caaspp22_ela_filled[name] <- caaspp22_ela_filled[col_name] / caaspp22_ela_filled$`All.Students`
+}
+write.csv(caaspp22_ela_filled,file='data/caaspp22_ela_demo.csv')
+```
+
+```{r}
+#df by grade
+caaspp_ela_outcome <- caaspp22 |>
+  select(School.Code, Student.Group.ID, Test.ID, Grade, Students.Enrolled, Students.Tested, Mean.Scale.Score) |>
+  filter(School.Code > 0) |>
+  filter(Test.ID==1) |>
+  filter(Student.Group.ID == 1) |>
+  filter(Grade == 3 | Grade == 4 | Grade == 5 | Grade == 6 | Grade == 7 | Grade == 8) |>
+  select(School.Code, Grade, Students.Enrolled, Students.Tested, Mean.Scale.Score)
+
+#Grade 3 distance from score (2432)
+grade_3 <- caaspp_ela_outcome |>
+  filter(Grade == 3) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2432)
+
+#Grade 4 distance from score (2473)
+grade_4 <- caaspp_ela_outcome |>
+  filter(Grade == 4) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2473)
+
+#Grade 5 distance from score (2502)
+grade_5 <- caaspp_ela_outcome |>
+  filter(Grade == 5) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2502)
+
+#Grade 6 distance from score (2618)
+grade_6 <- caaspp_ela_outcome |>
+  filter(Grade == 6) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2618)
+
+#Grade 7 distance from score (2649)
+grade_7 <- caaspp_ela_outcome |>
+  filter(Grade == 7) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2649)
+
+#Grade 8 distance from score (2668)
+grade_8 <- caaspp_ela_outcome |>
+  filter(Grade == 8) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2668)
+
+caaspp_ela_score_distance <- rbind(grade_3, grade_4, grade_5, grade_6, grade_7, grade_8) |>
+  na.omit()
+
+caaspp_ela_aggregate <- caaspp_ela_score_distance |>
+  group_by(School.Code) |>
+  summarise_at(vars(distance_from_score_ela), list(name = mean)) |>
+  rename("Avg.Score.Dist"="name")
+
+```
+
+```{r output}
+caaspp22_ela_score <- caaspp22_ela_filled |> left_join(y=caaspp_ela_aggregate, by = c("School.Code" = "School.Code"))
+
+write.csv(caaspp22_ela_score, file='data/caaspp22_ela_score.csv')
+```
+
+### next Step on full data
+* need to consider how to extract the all number of students efficiently in reshaping: joining as a separate table?
+* should the percentage of demographic distribution be calculated on school level of district level? (school level could be too sparse <> district level could lose info)
+* quality check: if percs of groups within one criterion category adds to one (is this a problem?)
+* n_schools/districts * 46 demographic groups
+* other potential data source: teacher data?
+
+
+# KNN explore
+Notice that the built-in knn function runs a k-nearest neighbour classification for test set from training set, which does not apply for our situation. 
+
+Potential related: 
+
+*   NN search: https://search.r-project.org/CRAN/refmans/RANN/html/nn2.html
+*   NN match: https://kosukeimai.github.io/MatchIt/reference/method_nearest.html
+*   KNN regression: https://www.datatechnotes.com/2020/10/knn-regresion-example-in-r.html
+
+```{r modeling}
+caaspp22_ela <- read_csv('data/caaspp22_ela_demo.csv')
+caaspp22_ela <- caaspp22_ela %>% drop_na()
+nearest <- nn2(caaspp22_ela, caaspp22_ela)
+```
+
+
+```{r modeling-bh}
+caaspp22_ela[caaspp22_ela$School.Code == 6044309, ]
+top10bh <- nearest$nn.idx[8242,]
+top10bhdis <-nearest$nn.dists[8242,]
 ```
