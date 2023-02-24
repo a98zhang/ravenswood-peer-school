@@ -11,7 +11,7 @@
 
 <meta name="author" content="Qingyang Zhang" />
 
-<meta name="date" content="2023-02-03" />
+<meta name="date" content="2023-02-23" />
 
 <title>eda</title>
 
@@ -358,15 +358,13 @@ display: none;
 
 <h1 class="title toc-ignore">eda</h1>
 <h4 class="author">Qingyang Zhang</h4>
-<h4 class="date">2023-02-03</h4>
+<h4 class="date">2023-02-23</h4>
 
 </div>
 
 
 <div id="import-data" class="section level1">
 <h1>import data</h1>
-<p>❗Note to upload local file when first-time using as the imported
-data will be recycled.</p>
 <p>For more data field references: <a href="https://caaspp-elpac.ets.org/caaspp/ResearchFileFormatSB?ps=true&amp;lstTestYear=2022&amp;lstTestType=B" class="uri">https://caaspp-elpac.ets.org/caaspp/ResearchFileFormatSB?ps=true&amp;lstTestYear=2022&amp;lstTestType=B</a></p>
 <pre class="r"><code>library(tidyverse)</code></pre>
 <pre><code>## ── Attaching packages ─────────────────────────────────────── tidyverse 1.3.2 ──
@@ -378,11 +376,40 @@ data will be recycled.</p>
 ## ✖ dplyr::filter() masks stats::filter()
 ## ✖ dplyr::lag()    masks stats::lag()</code></pre>
 <pre class="r"><code>library(readxl)
-
-caaspp22 &lt;- read.table(&#39;data/caaspp.txt&#39;,sep=&#39;^&#39;, header=TRUE)</code></pre>
+library(Hmisc) #https://CRAN.R-project.org/package=Hmisc</code></pre>
+<pre><code>## Loading required package: lattice
+## Loading required package: survival
+## Loading required package: Formula
+## 
+## Attaching package: &#39;Hmisc&#39;
+## 
+## The following objects are masked from &#39;package:dplyr&#39;:
+## 
+##     src, summarize
+## 
+## The following objects are masked from &#39;package:base&#39;:
+## 
+##     format.pval, units</code></pre>
+<pre class="r"><code>library(stargazer)</code></pre>
+<pre><code>## 
+## Please cite as: 
+## 
+##  Hlavac, Marek (2022). stargazer: Well-Formatted Regression and Summary Statistics Tables.
+##  R package version 5.2.3. https://CRAN.R-project.org/package=stargazer</code></pre>
+<pre class="r"><code>library(RANN) #https://cran.r-project.org/web/packages/RANN/RANN.pdf</code></pre>
 <pre class="r"><code>caaspp22 &lt;- read.table(&#39;data/caaspp.txt&#39;,sep=&#39;^&#39;, header=TRUE)
 student_groups &lt;- read_excel(&#39;data/lookup.xlsx&#39;, sheet = &quot;student_groups&quot;)
-ravenswood &lt;- read_csv(&#39;data/rvsw.csv&#39;) </code></pre>
+entities &lt;- read_csv(&#39;data/entities.csv&#39;)</code></pre>
+<pre><code>## New names:
+## Rows: 11339 Columns: 11
+## ── Column specification
+## ──────────────────────────────────────────────────────── Delimiter: &quot;,&quot; chr
+## (3): County Name, District Name, School Name dbl (7): ...1, County Code,
+## District Code, School Code, Test Year, Type ID, ... lgl (1): Filler
+## ℹ Use `spec()` to retrieve the full column specification for this data. ℹ
+## Specify the column types or set `show_col_types = FALSE` to quiet this message.
+## • `` -&gt; `...1`</code></pre>
+<pre class="r"><code>ravenswood &lt;- read_csv(&#39;data/rvsw.csv&#39;) </code></pre>
 <pre><code>## New names:
 ## Rows: 2977 Columns: 34
 ## ── Column specification
@@ -404,21 +431,25 @@ ravenswood &lt;- read_csv(&#39;data/rvsw.csv&#39;) </code></pre>
 ## ℹ Use `spec()` to retrieve the full column specification for this data. ℹ
 ## Specify the column types or set `show_col_types = FALSE` to quiet this message.
 ## • `` -&gt; `...1`</code></pre>
-<pre class="r"><code>ravenswood &lt;- caaspp22 %&gt;% filter(District.Code==&#39;68999&#39;)
-write.csv(ravenswood,file=&#39;data/rvsw.csv&#39;)
-bh &lt;- caaspp22 %&gt;% filter(School.Code==&#39;6044309&#39;)
-write.csv(bh,file=&#39;data/bh.csv&#39;)</code></pre>
-<div id="on-sample-data" class="section level3">
-<h3>on sample data</h3>
+<pre class="r"><code>#write.csv(entities,file=&#39;data/entities.csv&#39;)
+#write.csv(caaspp22,file=&#39;data/caaspp22.csv&#39;)
+#ravenswood &lt;- caaspp22 %&gt;% filter(District.Code==&#39;68999&#39;)
+#write.csv(ravenswood,file=&#39;data/rvsw.csv&#39;)
+#bh &lt;- caaspp22 %&gt;% filter(School.Code==&#39;6044309&#39;)
+#write.csv(bh,file=&#39;data/bh.csv&#39;)</code></pre>
+</div>
+<div id="eda-on-belle-haven" class="section level1">
+<h1>EDA on Belle Haven</h1>
 <hr />
 <p>We sample the records of the Belle Haven Elementary School ELA test
 results as the toy data set to explore for data wrangling.</p>
 <p>🛑 Decision To Be Done: * what variable to choose as the number of
 students when calculating the proportion of student composition for each
 student subgroup (consider that there could be slight difference across
-subjects for tested-related variables) * how to handle missing values
-for certain student subgroup * to what level of granularity of student
-subgroup we are going to use</p>
+subjects for tested-related variables) 🅰 use
+<code>students.tested</code> * how to handle missing values for certain
+student subgroup use? * to what level of granularity of student subgroup
+we are going to use 🅰 ignore two-level first</p>
 <pre class="r"><code>select_cols &lt;- c(&#39;Student.Group.ID&#39;,
                       &#39;Total.Tested.at.Reporting.Level&#39;, 
                       &#39;Total.Tested.with.Scores.at.Reporting.Level&#39;, 
@@ -484,6 +515,9 @@ bh_allgrades_a %&gt;%
 ## #   `77_Filipino_Race and Ethnicity` &lt;dbl&gt;,
 ## #   `78_Hispanic or Latino_Race and Ethnicity` &lt;dbl&gt;,
 ## #   `79_Native Hawaiian or Pacific Islander_Race and Ethnicity` &lt;dbl&gt;, …</code></pre>
+</div>
+<div id="on-district-data" class="section level3">
+<h3>on district data</h3>
 <pre class="r"><code>select_cols &lt;- c(&#39;School.Code&#39;,
                   &#39;Student.Group.ID&#39;,
                   &#39;Students.Tested&#39;)
@@ -497,57 +531,120 @@ ravenswood_s &lt;- ravenswood %&gt;%
     filter(Student.Group.ID %in% select_groups) %&gt;%
     left_join(y=student_groups, by = c(&quot;Student.Group.ID&quot; = &quot;Demographic ID&quot;)) %&gt;% 
     rename(&quot;Demographic.ID.Num&quot; = &quot;Demographic ID Num&quot;,
-           &quot;Demographic.Name&quot; = &quot;Demographic Name&quot;,
-           &quot;Student.Group&quot; = &quot;Student Group&quot;) %&gt;%
+           &quot;Demographic.Name&quot; = &quot;Demographic Name&quot;) %&gt;%
     select(all_of(c(&#39;School.Code&#39;,
-                  &#39;Student.Group.ID&#39;,
                   &#39;Students.Tested&#39;,
                   &#39;Demographic.Name&#39;))) %&gt;%
     pivot_wider(names_from = School.Code, values_from = &#39;Students.Tested&#39;)
                   #&#39;Demographic.Name&#39;))
+ravenswood_s</code></pre>
+<pre><code>## # A tibble: 15 × 9
+##    Demographic.N…¹ `0`   12664…² 13419…³ 13560…⁴ 13609…⁵ 41689…⁶ 60443…⁷ 60443…⁸
+##    &lt;chr&gt;           &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;  
+##  1 All Students    964   68      372     458     492     *       190     213    
+##  2 Female          461   27      182     216     224     &lt;NA&gt;    91      119    
+##  3 Economically d… 825   61      274     427     425     0       165     174    
+##  4 Black or Afric… 64    *       15      11      36      &lt;NA&gt;    13      14     
+##  5 American India… *     0       &lt;NA&gt;    *       *       &lt;NA&gt;    0       &lt;NA&gt;   
+##  6 Asian           *     &lt;NA&gt;    &lt;NA&gt;    *       &lt;NA&gt;    &lt;NA&gt;    &lt;NA&gt;    *      
+##  7 Filipino        *     &lt;NA&gt;    *       &lt;NA&gt;    &lt;NA&gt;    &lt;NA&gt;    *       *      
+##  8 Hispanic or La… 759   64      328     424     384     0       154     157    
+##  9 Native Hawaiia… 105   *       14      18      52      &lt;NA&gt;    20      32     
+## 10 White           8     &lt;NA&gt;    5       *       4       *       0       *      
+## 11 Not a high sch… 454   29      99      194     267     0       67      91     
+## 12 Declined to st… 10    *       37      12      4       &lt;NA&gt;    4       *      
+## 13 Reported disab… 151   10      59      58      79      *       31      30     
+## 14 Two or more ra… 20    *       9       *       13      &lt;NA&gt;    *       *      
+## 15 EverñEL         706   64      273     393     377     0       131     134    
+## # … with abbreviated variable names ¹​Demographic.Name, ²​`126649`, ³​`134197`,
+## #   ⁴​`135608`, ⁵​`136093`, ⁶​`4168999`, ⁷​`6044309`, ⁸​`6044325`</code></pre>
+<pre class="r"><code>#latexTabular(format.df(ravenswood_s))
+#write.csv(ravenswood_s ,file=&#39;data/rvsw_agg.csv&#39;)</code></pre>
+</div>
+</div>
+<div id="wrangling" class="section level1">
+<h1>Wrangling</h1>
+<pre class="r"><code>caaspp22_ela_pivoted &lt;- caaspp22 %&gt;% 
+    # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy,
+    filter(Grade==13 &amp; Test.ID==1) %&gt;%
+    # Type.ID 7 means public schools
+    filter(Type.ID==7 | Type.ID==9 | Type.ID==10) %&gt;%
+    select(all_of(select_cols)) %&gt;%
+    filter(Student.Group.ID %in% select_groups) %&gt;%
+    left_join(y=student_groups, by = c(&quot;Student.Group.ID&quot; = &quot;Demographic ID&quot;)) %&gt;% 
+    rename(&quot;Demographic.ID.Num&quot; = &quot;Demographic ID Num&quot;,
+           &quot;Demographic.Name&quot; = &quot;Demographic Name&quot;) %&gt;%
+    select(all_of(c(&#39;School.Code&#39;,
+                  &#39;Students.Tested&#39;,
+                  &#39;Demographic.Name&#39;))) %&gt;%
+    pivot_wider(names_from = Demographic.Name, values_from = &#39;Students.Tested&#39;)</code></pre>
+<pre class="r"><code>caaspp22_ela_filled &lt;- data.frame(caaspp22_ela_pivoted)
+caaspp22_ela_filled[caaspp22_ela_filled==&#39;*&#39;] &lt;- &#39;1&#39;
+caaspp22_ela_filled[is.na(caaspp22_ela_filled)] &lt;- &#39;0&#39;
+caaspp22_ela_filled &lt;- caaspp22_ela_filled %&gt;% mutate_if(is.character, as.numeric)</code></pre>
+<pre class="r"><code>col_names &lt;- names(caaspp22_ela_filled)[3:length(names(caaspp22_ela_filled))]
+for (col_name in col_names) {
+  name &lt;- paste0(&#39;Perc.&#39;, col_name)
+  caaspp22_ela_filled[name] &lt;- caaspp22_ela_filled[col_name] / caaspp22_ela_filled$`All.Students` * 100
+}
+caaspp22_ela_demo &lt;- caaspp22_ela_filled %&gt;% select(-col_names)</code></pre>
+<pre><code>## Note: Using an external vector in selections is ambiguous.
+## ℹ Use `all_of(col_names)` instead of `col_names` to silence this message.
+## ℹ See &lt;https://tidyselect.r-lib.org/reference/faq-external-vector.html&gt;.
+## This message is displayed once per session.</code></pre>
+<pre class="r"><code>write.csv(caaspp22_ela_demo,file=&#39;data/caaspp22_ela_demo.csv&#39;)</code></pre>
+<pre class="r"><code>#df by grade
+caaspp_ela_outcome &lt;- caaspp22 |&gt;
+  select(School.Code, Student.Group.ID, Test.ID, Grade, Students.Enrolled, Students.Tested, Mean.Scale.Score) |&gt;
+  filter(School.Code &gt; 0) |&gt;
+  filter(Test.ID==1) |&gt;
+  filter(Student.Group.ID == 1) |&gt;
+  filter(Grade == 3 | Grade == 4 | Grade == 5 | Grade == 6 | Grade == 7 | Grade == 8) |&gt;
+  select(School.Code, Grade, Students.Enrolled, Students.Tested, Mean.Scale.Score)
 
-ravenswood_s </code></pre>
-<pre><code>## # A tibble: 15 × 10
-##    Stude…¹ Demog…² `0`   12664…³ 13419…⁴ 13560…⁵ 13609…⁶ 41689…⁷ 60443…⁸ 60443…⁹
-##      &lt;dbl&gt; &lt;chr&gt;   &lt;chr&gt; &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;   &lt;chr&gt;  
-##  1       1 All St… 964   68      372     458     492     *       190     213    
-##  2       4 Female  461   27      182     216     224     &lt;NA&gt;    91      119    
-##  3      31 Econom… 825   61      274     427     425     0       165     174    
-##  4      74 Black … 64    *       15      11      36      &lt;NA&gt;    13      14     
-##  5      75 Americ… *     0       &lt;NA&gt;    *       *       &lt;NA&gt;    0       &lt;NA&gt;   
-##  6      76 Asian   *     &lt;NA&gt;    &lt;NA&gt;    *       &lt;NA&gt;    &lt;NA&gt;    &lt;NA&gt;    *      
-##  7      77 Filipi… *     &lt;NA&gt;    *       &lt;NA&gt;    &lt;NA&gt;    &lt;NA&gt;    *       *      
-##  8      78 Hispan… 759   64      328     424     384     0       154     157    
-##  9      79 Native… 105   *       14      18      52      &lt;NA&gt;    20      32     
-## 10      80 White   8     &lt;NA&gt;    5       *       4       *       0       *      
-## 11      90 Not a … 454   29      99      194     267     0       67      91     
-## 12     121 Declin… 10    *       37      12      4       &lt;NA&gt;    4       *      
-## 13     128 Report… 151   10      59      58      79      *       31      30     
-## 14     144 Two or… 20    *       9       *       13      &lt;NA&gt;    *       *      
-## 15     170 EverñEL 706   64      273     393     377     0       131     134    
-## # … with abbreviated variable names ¹​Student.Group.ID, ²​Demographic.Name,
-## #   ³​`126649`, ⁴​`134197`, ⁵​`135608`, ⁶​`136093`, ⁷​`4168999`, ⁸​`6044309`,
-## #   ⁹​`6044325`</code></pre>
-<pre class="r"><code>write.csv(ravenswood_s ,file=&#39;data/rvsw_agg.csv&#39;)</code></pre>
+#Grade 3 distance from score (2432)
+grade_3 &lt;- caaspp_ela_outcome |&gt;
+  filter(Grade == 3) |&gt;
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2432)</code></pre>
+<pre><code>## Warning in mask$eval_all_mutate(quo): NAs introduced by coercion</code></pre>
+<pre class="r"><code>#Grade 4 distance from score (2473)
+grade_4 &lt;- caaspp_ela_outcome |&gt;
+  filter(Grade == 4) |&gt;
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2473)</code></pre>
+<pre><code>## Warning in mask$eval_all_mutate(quo): NAs introduced by coercion</code></pre>
+<pre class="r"><code>#Grade 5 distance from score (2502)
+grade_5 &lt;- caaspp_ela_outcome |&gt;
+  filter(Grade == 5) |&gt;
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2502)</code></pre>
+<pre><code>## Warning in mask$eval_all_mutate(quo): NAs introduced by coercion</code></pre>
+<pre class="r"><code>#Grade 6 distance from score (2618)
+grade_6 &lt;- caaspp_ela_outcome |&gt;
+  filter(Grade == 6) |&gt;
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2618)</code></pre>
+<pre><code>## Warning in mask$eval_all_mutate(quo): NAs introduced by coercion</code></pre>
+<pre class="r"><code>#Grade 7 distance from score (2649)
+grade_7 &lt;- caaspp_ela_outcome |&gt;
+  filter(Grade == 7) |&gt;
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2649)</code></pre>
+<pre><code>## Warning in mask$eval_all_mutate(quo): NAs introduced by coercion</code></pre>
+<pre class="r"><code>#Grade 8 distance from score (2668)
+grade_8 &lt;- caaspp_ela_outcome |&gt;
+  filter(Grade == 8) |&gt;
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2668)</code></pre>
+<pre><code>## Warning in mask$eval_all_mutate(quo): NAs introduced by coercion</code></pre>
+<pre class="r"><code>caaspp_ela_score_distance &lt;- rbind(grade_3, grade_4, grade_5, grade_6, grade_7, grade_8) |&gt;
+  na.omit()
+
+caaspp_ela_aggregate &lt;- caaspp_ela_score_distance |&gt;
+  group_by(School.Code) |&gt;
+  summarise_at(vars(distance_from_score_ela), list(name = mean)) |&gt;
+  rename(&quot;Avg.Score.Dist&quot;=&quot;name&quot;)</code></pre>
+<pre class="r"><code>caaspp22_ela_score &lt;- caaspp22_ela_demo |&gt; left_join(y=caaspp_ela_aggregate, by = c(&quot;School.Code&quot; = &quot;School.Code&quot;))
+
+write.csv(caaspp22_ela_score, file=&#39;data/caaspp22_ela_score.csv&#39;)</code></pre>
 </div>
-</div>
-<div id="next-step-on-full-data" class="section level3">
-<h3>next Step on full data</h3>
-<ul>
-<li>need to consider how to extract the all number of students
-efficiently in reshaping: joining as a separate table?</li>
-<li>should the percentage of demographic distribution be calculated on
-school level of district level? (school level could be too sparse
-&lt;&gt; district level could lose info)</li>
-<li>quality check: if percs of groups within one criterion category adds
-to one (is this a problem?)</li>
-<li>n_schools/districts * 46 demographic groups</li>
-<li>other potential data source: teacher data?</li>
-</ul>
-</div>
-</div>
-<div id="knn-explore" class="section level1">
-<h1>KNN explore</h1>
+<div id="knn" class="section level1">
+<h1>KNN</h1>
 <p>Notice that the built-in knn function runs a k-nearest neighbour
 classification for test set from training set, which does not apply for
 our situation.</p>
@@ -557,6 +654,65 @@ our situation.</p>
 <li>NN match: <a href="https://kosukeimai.github.io/MatchIt/reference/method_nearest.html" class="uri">https://kosukeimai.github.io/MatchIt/reference/method_nearest.html</a></li>
 <li>KNN regression: <a href="https://www.datatechnotes.com/2020/10/knn-regresion-example-in-r.html" class="uri">https://www.datatechnotes.com/2020/10/knn-regresion-example-in-r.html</a></li>
 </ul>
+<pre class="r"><code>caaspp22_ela &lt;- read_csv(&#39;data/caaspp22_ela_demo.csv&#39;) %&gt;%
+    # drop the column to set School.Code as index
+    column_to_rownames(., var = &#39;School.Code&#39;) %&gt;%
+    select(-&#39;...1&#39;) %&gt;%
+    # 223 missing values in Perc%. Potentially bc OG num is 0, then impute 0? drop for now
+    drop_na()</code></pre>
+<pre><code>## New names:
+## Rows: 10257 Columns: 17
+## ── Column specification
+## ──────────────────────────────────────────────────────── Delimiter: &quot;,&quot; dbl
+## (17): ...1, School.Code, All.Students, Perc.Female, Perc.Economically.di...
+## ℹ Use `spec()` to retrieve the full column specification for this data. ℹ
+## Specify the column types or set `show_col_types = FALSE` to quiet this message.
+## • `` -&gt; `...1`</code></pre>
+<pre class="r"><code>nearest &lt;- nn2(caaspp22_ela, caaspp22_ela)</code></pre>
+<pre class="r"><code>caaspp22_ela[&#39;6044309&#39;, ]</code></pre>
+<pre><code>##         All.Students Perc.Female Perc.Economically.disadvantaged
+## 6044309          190    47.89474                        86.84211
+##         Perc.Black.or.African.American Perc.American.Indian.or.Alaska.Native
+## 6044309                       6.842105                                     0
+##         Perc.Asian Perc.Hispanic.or.Latino Perc.White
+## 6044309          0                81.05263          0
+##         Perc.Not.a.high.school.graduate Perc.Declined.to.state
+## 6044309                        35.26316               2.105263
+##         Perc.Reported.disabilities Perc.Two.or.more.races Perc.EverñEL
+## 6044309                   16.31579              0.5263158     68.94737
+##         Perc.Filipino Perc.Native.Hawaiian.or.Pacific.Islander
+## 6044309     0.5263158                                 10.52632</code></pre>
+<pre class="r"><code>row_idx &lt;- which(rownames(caaspp22_ela) == &quot;6044309&quot;) 
+top10bh &lt;- nearest$nn.idx[row_idx,]
+top10bhdis &lt;-nearest$nn.dists[row_idx,]</code></pre>
+<pre class="r"><code>ravenswood_school_codes &lt;- caaspp22 %&gt;% 
+                                filter(District.Code==&#39;68999&#39;) %&gt;% 
+                                filter(Type.ID==7 | Type.ID==9 | Type.ID==10) %&gt;%
+                                select(School.Code) %&gt;% 
+                                unique() %&gt;% 
+                                .$School.Code
+
+top10_ravenswood &lt;- data.frame(Rank=numeric(0), 
+                               Dist=numeric(0),
+                               School.Code=numeric(0))
+
+for (school in ravenswood_school_codes) {
+  
+  # each ravenswood school has ten rows, i.e. top ten neighbors 
+  row_idx &lt;- which(rownames(caaspp22_ela) == as.character(school)) 
+  top10_id &lt;- nearest$nn.idx[row_idx,]
+  top10_ds &lt;-nearest$nn.dists[row_idx,]
+  
+  # each row a neighbor with info about rank，dist, school.code
+  for (rk in 1:10) {
+    nn_idx &lt;- top10_id[rk]
+    neighbor_code &lt;- rownames(caaspp22_ela)[nn_idx]
+    top10_ravenswood[nrow(top10_ravenswood) + 1, ] &lt;- c(rk, top10_ds[rk], neighbor_code)  
+  }
+  
+}
+
+write.csv(top10_ravenswood, file=&#39;data/top10_ravenswood.csv&#39;)</code></pre>
 </div>
 
 

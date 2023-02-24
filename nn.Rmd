@@ -1,6 +1,6 @@
 ---
-title: "eda"
-author: "Qingyang Zhang"
+title: "Ravenswood Peer School Working File"
+author: "Qingyang Zhang & Dorna Abdi"
 date: "`r Sys.Date()`"
 output: html_document
 ---
