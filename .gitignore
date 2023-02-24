@@ -5,6 +5,5 @@
 .Ruserdata
 .DS_Store
 
-.gitattributes
-
 data/caaspp.txt
+data/caaspp.csv
