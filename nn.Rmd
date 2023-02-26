@@ -17,6 +17,8 @@ For more data field references: https://caaspp-elpac.ets.org/caaspp/ResearchFile
 ```{r importing_packages}
 library(tidyverse)
 library(readxl)
+library(dplyr)
+library(ggplot2)
 library(Hmisc) #https://CRAN.R-project.org/package=Hmisc
 library(stargazer)
 library(RANN) #https://cran.r-project.org/web/packages/RANN/RANN.pdf
@@ -39,102 +41,6 @@ bh <- read_csv('data/bh.csv')
 #write.csv(bh,file='data/bh.csv')
 ```
 
-
-# EDA on Belle Haven 
-
----
-We sample the records of the Belle Haven Elementary School ELA test results as the toy data set to explore for data wrangling. 
-
-🛑 Decision To Be Done:
-* what variable to choose as the number of students when calculating the proportion of student composition for each student subgroup (consider that there could be slight difference across subjects for tested-related variables) 🅰  use `students.tested`
-* how to handle missing values for certain student subgroup use? 
-* to what level of granularity of student subgroup we are going to use 🅰 ignore two-level first
-
-```{r}
-select_cols <- c('Student.Group.ID',
-                      'Total.Tested.at.Reporting.Level', 
-                      'Total.Tested.with.Scores.at.Reporting.Level', 
-                      'Students.Enrolled', 
-                      'Students.Tested')
-bh_allgrades <- bh %>% 
-    # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy
-    filter(Grade==13 & Test.ID==1) %>%
-    select(all_of(select_cols)) %>%
-    left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
-    rename("Demographic.ID.Num" = "Demographic ID Num",
-           "Demographic.Name" = "Demographic Name",
-           "Student.Group" = "Student Group")
-```
-
-##### Assume using 'Students.Tested'
-With respect to what variable to use as the number of students when calculating the proportion of student composition for each student subgroup, for simplicity, we use `Students.Tested` for EDA and detailed illustrations. We observe that 
-* there are 12 ways of describing subgroups, and in total 45 subgroups
-* there are missing data, marked as `*`, which seems to differ from 0. e.g.
-  
-  0	|American Indian or Alaska Native	| Race and Ethnicity
-
-  \* |	Filipino	| Race and Ethnicity
-  
-```{r}
-bh_allgrades_a <- bh_allgrades %>%
-    select(c('Students.Tested', 'Demographic.ID.Num', 'Demographic.Name', 'Student.Group'))
-bh_allgrades_a %>%
-    count(Student.Group) %>%
-    pivot_wider(names_from = Student.Group, values_from = n)
-```
-
-
-##### Assume replace missing value with 0
-```{r }
-bh_allgrades_a <- bh_allgrades_a %>%
-    # notice NAs will be introduced by coercion
-    mutate_at('Students.Tested', as.numeric) %>%
-    # replace NA with 0
-    replace_na(list(Students.Tested = 0)) 
-```
-
-```{r}
-bh_allgrades_a <- bh_allgrades_a %>% 
-    # create a new column for percentage 
-    mutate(Perc = Students.Tested / max(bh_allgrades_a$Students.Tested)*100) %>%
-    mutate(Student.Group.Desc = paste(Demographic.ID.Num, Demographic.Name, Student.Group, sep = '_'))
-```
-
-```{r}
-bh_allgrades_a %>% 
-    select(c('Student.Group.Desc', 'Perc')) %>%
-    pivot_wider(names_from = Student.Group.Desc, values_from = Perc)
-```
-
-### on district data
-
-```{r ravenswood}
-
-select_cols <- c('School.Code',
-                  'Student.Group.ID',
-                  'Students.Tested')
-
-select_groups <- c(1, 128, 31, 170, 75, 76, 74, 77, 78, 79, 80, 144, 4, 90, 121)
-
-ravenswood_s <- ravenswood %>% 
-    # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy
-    filter(Grade==13 & Test.ID==1) %>%
-    select(all_of(select_cols)) %>%
-    filter(Student.Group.ID %in% select_groups) %>%
-    left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
-    rename("Demographic.ID.Num" = "Demographic ID Num",
-           "Demographic.Name" = "Demographic Name") %>%
-    select(all_of(c('School.Code',
-                  'Students.Tested',
-                  'Demographic.Name'))) %>%
-    pivot_wider(names_from = School.Code, values_from = 'Students.Tested')
-                  #'Demographic.Name'))
-ravenswood_s
-
-#latexTabular(format.df(ravenswood_s))
-#write.csv(ravenswood_s ,file='data/rvsw_agg.csv')
-```
-
 # Wrangling
 
 ```{r full-data}
@@ -154,6 +60,7 @@ caaspp22_ela_pivoted <- caaspp22 %>%
     pivot_wider(names_from = Demographic.Name, values_from = 'Students.Tested')
 ```
 
+## Missing data
 
 ```{r full-data-missing-val}
 caaspp22_ela_filled <- data.frame(caaspp22_ela_pivoted)
@@ -172,6 +79,8 @@ caaspp22_ela_demo <- caaspp22_ela_filled %>% select(-col_names)
 
 write.csv(caaspp22_ela_demo,file='data/caaspp22_ela_demo.csv')
 ```
+
+## Outcome Encoding
 
 ```{r scores-distance}
 #df by grade
@@ -229,8 +138,7 @@ caaspp22_ela_score <- caaspp22_ela_demo |> left_join(y=caaspp_ela_aggregate, by 
 write.csv(caaspp22_ela_score, file='data/caaspp22_ela_score.csv')
 ```
 
-
-# KNN
+# Modeling
 Notice that the built-in knn function runs a k-nearest neighbour classification for test set from training set, which does not apply for our situation. 
 
 Potential related: 
@@ -239,27 +147,46 @@ Potential related:
 *   NN match: https://kosukeimai.github.io/MatchIt/reference/method_nearest.html
 *   KNN regression: https://www.datatechnotes.com/2020/10/knn-regresion-example-in-r.html
 
-```{r modeling}
+```{r importing}
 caaspp22_ela <- read_csv('data/caaspp22_ela_demo.csv') %>%
     # drop the column to set School.Code as index
     column_to_rownames(., var = 'School.Code') %>%
     select(-'...1') %>%
     # 223 missing values in Perc%. Potentially bc OG num is 0, then impute 0? drop for now
     drop_na()
-                
+```
+
+## Feature Engineering
+Before running models, we would like to conduct some feature engineering.
+
+1. Normalize school size (`All.Students`)
+
+```{r preprocessing}
+hist(caaspp22_ela$All.Students)
+d <- density(caaspp22_ela$All.Students) # returns the density data
+plot(d) # plots the results
+boxplot(caaspp22_ela$All.Students, data=caaspp22_ela)
+
+entities[entities['School Code']=='1996115', ]
+
+# normalize the school size column?
+#caaspp22_ela['All.Students'] <- lapply(caaspp22_ela['All.Students'], function(x) ((x - min(x)) / (max(x) - min(x))))
+```
+
+Before normalization, we found out that there is an outlier (6421) that is way greater than all other schools (>>3763, the second large). We consider removing the record (City of Angels at Los Angeles Unified).
+
+```{r modeling}
 nearest <- nn2(caaspp22_ela, caaspp22_ela)
-
 ```
 
-
-```{r modeling-bh}
-
-caaspp22_ela['6044309', ]
-row_idx <- which(rownames(caaspp22_ela) == "6044309") 
-top10bh <- nearest$nn.idx[row_idx,]
-top10bhdis <-nearest$nn.dists[row_idx,]
-
+```{r qc-outcome}
+selectedna <- c('1037456', '115402', '132233')
+sample_na <- caaspp22 |> 
+  filter(School.Code %in% selectedna) |>
+  filter(Test.ID==1) |>
+  filter(Student.Group.ID == 1)
 ```
+
 
 ```{r modeling-loop-all}
 ravenswood_school_codes <- caaspp22 %>% 

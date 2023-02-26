@@ -1,0 +1,107 @@
+---
+title: "EDA on Belle Haven"
+author: "Qingyang Zhang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# EDA on Belle Haven 
+
+---
+We sample the records of the Belle Haven Elementary School ELA test results as the toy data set to explore for data wrangling. 
+
+🛑 Decision To Be Done:
+* what variable to choose as the number of students when calculating the proportion of student composition for each student subgroup (consider that there could be slight difference across subjects for tested-related variables) 🅰  use `students.tested`
+* how to handle missing values for certain student subgroup use? 
+* to what level of granularity of student subgroup we are going to use 🅰 ignore two-level first
+
+```{r}
+select_cols <- c('Student.Group.ID',
+                      'Total.Tested.at.Reporting.Level', 
+                      'Total.Tested.with.Scores.at.Reporting.Level', 
+                      'Students.Enrolled', 
+                      'Students.Tested')
+bh_allgrades <- bh %>% 
+    # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy
+    filter(Grade==13 & Test.ID==1) %>%
+    select(all_of(select_cols)) %>%
+    left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
+    rename("Demographic.ID.Num" = "Demographic ID Num",
+           "Demographic.Name" = "Demographic Name",
+           "Student.Group" = "Student Group")
+```
+
+##### Assume using 'Students.Tested'
+With respect to what variable to use as the number of students when calculating the proportion of student composition for each student subgroup, for simplicity, we use `Students.Tested` for EDA and detailed illustrations. We observe that 
+* there are 12 ways of describing subgroups, and in total 45 subgroups
+* there are missing data, marked as `*`, which seems to differ from 0. e.g.
+  
+  0	|American Indian or Alaska Native	| Race and Ethnicity
+
+  \* |	Filipino	| Race and Ethnicity
+  
+```{r}
+bh_allgrades_a <- bh_allgrades %>%
+    select(c('Students.Tested', 'Demographic.ID.Num', 'Demographic.Name', 'Student.Group'))
+bh_allgrades_a %>%
+    count(Student.Group) %>%
+    pivot_wider(names_from = Student.Group, values_from = n)
+```
+
+
+
+
+##### Assume replace missing value with 0
+```{r }
+bh_allgrades_a <- bh_allgrades_a %>%
+    # notice NAs will be introduced by coercion
+    mutate_at('Students.Tested', as.numeric) %>%
+    # replace NA with 0
+    replace_na(list(Students.Tested = 0)) 
+```
+
+```{r}
+bh_allgrades_a <- bh_allgrades_a %>% 
+    # create a new column for percentage 
+    mutate(Perc = Students.Tested / max(bh_allgrades_a$Students.Tested)*100) %>%
+    mutate(Student.Group.Desc = paste(Demographic.ID.Num, Demographic.Name, Student.Group, sep = '_'))
+```
+
+```{r}
+bh_allgrades_a %>% 
+    select(c('Student.Group.Desc', 'Perc')) %>%
+    pivot_wider(names_from = Student.Group.Desc, values_from = Perc)
+```
+
+### on district data
+
+```{r ravenswood}
+
+select_cols <- c('School.Code',
+                  'Student.Group.ID',
+                  'Students.Tested')
+
+select_groups <- c(1, 128, 31, 170, 75, 76, 74, 77, 78, 79, 80, 144, 4, 90, 121)
+
+ravenswood_s <- ravenswood %>% 
+    # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy
+    filter(Grade==13 & Test.ID==1) %>%
+    select(all_of(select_cols)) %>%
+    filter(Student.Group.ID %in% select_groups) %>%
+    left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
+    rename("Demographic.ID.Num" = "Demographic ID Num",
+           "Demographic.Name" = "Demographic Name") %>%
+    select(all_of(c('School.Code',
+                  'Students.Tested',
+                  'Demographic.Name'))) %>%
+    pivot_wider(names_from = School.Code, values_from = 'Students.Tested')
+                  #'Demographic.Name'))
+ravenswood_s
+
+#latexTabular(format.df(ravenswood_s))
+#write.csv(ravenswood_s ,file='data/rvsw_agg.csv')
+```
