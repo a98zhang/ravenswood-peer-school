@@ -22,7 +22,10 @@ library(ggplot2)
 library(Hmisc) #https://CRAN.R-project.org/package=Hmisc
 library(stargazer)
 library(RANN) #https://cran.r-project.org/web/packages/RANN/RANN.pdf
+
 library(stats) #hclust
+library(FactoMineR)
+library(factoextra)
 ```
 
 ```{r loading_data}
@@ -45,6 +48,12 @@ bh <- read_csv('data/bh.csv')
 # Wrangling
 
 ```{r full-data}
+select_cols <- c('School.Code',
+                  'Student.Group.ID',
+                  'Students.Tested')
+
+select_groups <- c(1, 128, 31, 170, 75, 76, 74, 77, 78, 79, 80, 144, 4, 90, 121)
+
 caaspp22_ela_pivoted <- caaspp22 %>% 
     # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy,
     filter(Grade==13 & Test.ID==1) %>%
@@ -59,6 +68,32 @@ caaspp22_ela_pivoted <- caaspp22 %>%
                   'Students.Tested',
                   'Demographic.Name'))) %>%
     pivot_wider(names_from = Demographic.Name, values_from = 'Students.Tested')
+```
+
+```{r school_type}
+caaspp22_grade <- caaspp22 |> 
+  group_by(School.Code) |> # 10,258 Unique School Codes
+  filter(School.Code != 0 & Grade != 13) |>
+  mutate(Grade.Count = n_distinct(Grade)) |>
+  mutate(Grade.List = paste0(unique(Grade), collapse = ','))
+
+grade_count <- caaspp22 |> 
+  group_by(School.Code) |> # 10,258 Unique School Codes
+  filter(School.Code != 0 & Grade != 13) |>
+  summarise(Grade.Count = n_distinct(Grade))
+
+grade_list <- caaspp22 |> 
+  group_by(School.Code) |> # 10,258 Unique School Codes
+  filter(School.Code != 0 & Grade != 13) |>
+  summarise(Grade.List = paste0(unique(Grade), collapse = ','))
+
+grades <- grade_count |>
+  left_join(y=grade_list, by=c("School.Code" = "School.Code"))
+
+school_type_table <- as.data.frame(
+  table(grades$Grade.List, grades$Grade.Count)) |>
+  setNames(c('grade_list', 'grade_count', 'freq')) |>
+  filter(freq != 0)
 ```
 
 ## Missing data
@@ -237,15 +272,18 @@ write.csv(top10_ravenswood, file='data/top10_ravenswood.csv')
 hclusters <- hclust(dist(caaspp22_ela))
 plot(hclusters) # uneven distribution over 4 clusters
 ```
+
 ## K-means Clustering
 ```{r pca}
-library("FactoMineR")
-res.pca <- PCA(caaspp22_ela)
-res.pca 
-summary(pc.cr <- princomp(caaspp22_ela))
-loadings(pc.cr)  # note that blank entries are small but not zero
+res.pca <- prcomp(caaspp22_ela, center = TRUE,scale. = TRUE)
+print(res.pca)
+fviz_eig(res.pca)
+fviz_pca_var(res.pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
 ```
-
 
 
 ```{r kmeans}
