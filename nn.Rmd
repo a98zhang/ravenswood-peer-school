@@ -22,6 +22,7 @@ library(ggplot2)
 library(Hmisc) #https://CRAN.R-project.org/package=Hmisc
 library(stargazer)
 library(RANN) #https://cran.r-project.org/web/packages/RANN/RANN.pdf
+library(stats) #hclust
 ```
 
 ```{r loading_data}
@@ -169,11 +170,21 @@ boxplot(caaspp22_ela$All.Students, data=caaspp22_ela)
 
 entities[entities['School Code']=='1996115', ]
 
-# normalize the school size column?
-#caaspp22_ela['All.Students'] <- lapply(caaspp22_ela['All.Students'], function(x) ((x - min(x)) / (max(x) - min(x))))
+# normalize the school size column
+# use log to address outliers 
+# add 1e-10 to avoid 0 throwing off the normalization
+normalize <- function(x) {
+  x <- log(x + 1e-10)
+  return ((x - min(x)) / (max(x) - min(x)) * 100) 
+}
+
+
+caaspp22_ela['All.Students'] <- lapply(caaspp22_ela['All.Students'], normalize)
 ```
 
 Before normalization, we found out that there is an outlier (6421) that is way greater than all other schools (>>3763, the second large). We consider removing the record (City of Angels at Los Angeles Unified).
+
+## Nearest Neighbor
 
 ```{r modeling}
 nearest <- nn2(caaspp22_ela, caaspp22_ela)
@@ -217,5 +228,35 @@ for (school in ravenswood_school_codes) {
 }
 
 write.csv(top10_ravenswood, file='data/top10_ravenswood.csv')
+
+```
+
+## Hierarchical Clustering
+
+```{r hclust}
+hclusters <- hclust(dist(caaspp22_ela))
+plot(hclusters) # uneven distribution over 4 clusters
+```
+## K-means Clustering
+```{r pca}
+library("FactoMineR")
+res.pca <- PCA(caaspp22_ela)
+res.pca 
+summary(pc.cr <- princomp(caaspp22_ela))
+loadings(pc.cr)  # note that blank entries are small but not zero
+```
+
+
+
+```{r kmeans}
+#library(cluster)
+library(factoextra)
+library(ggpubr)
+
+fviz_nbclust(caaspp22_ela, kmeans, method='wss')
+set.seed(1234)
+#concern: not exactly same size
+km <- kmeans(caaspp22_ela, 4)
+fviz_cluster(km, data=caaspp22_ela, geom="point")
 
 ```
