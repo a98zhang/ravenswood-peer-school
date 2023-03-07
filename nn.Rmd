@@ -14,8 +14,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 For more data field references: https://caaspp-elpac.ets.org/caaspp/ResearchFileFormatSB?ps=true&lstTestYear=2022&lstTestType=B
 
-```{r importing_packages}
+```{r importing_packages, include=FALSE}
 library(tidyverse)
+library(tidymodels)
 library(readxl)
 library(dplyr)
 library(ggplot2)
@@ -26,9 +27,16 @@ library(RANN) #https://cran.r-project.org/web/packages/RANN/RANN.pdf
 library(stats) #hclust
 library(FactoMineR)
 library(factoextra)
+library(cluster)
+library(ggpubr)
+library(corrplot)
+
+library(caret) #KNN regression
+
+set.seed(42)
 ```
 
-```{r loading_data}
+```{r loading_data, include=FALSE}
 caaspp22 <- read.table('data/caaspp.txt',sep='^', header=TRUE)
 student_groups <- read_excel('data/lookup.xlsx', sheet = "student_groups")
 entities <- read_csv('data/entities.csv')
@@ -36,7 +44,7 @@ ravenswood <- read_csv('data/rvsw.csv')
 bh <- read_csv('data/bh.csv') 
 ```
 
-```{r exporting}
+```{r exporting, include=FALSE}
 #write.csv(entities,file='data/entities.csv')
 #write.csv(caaspp22,file='data/caaspp22.csv')
 #ravenswood <- caaspp22 %>% filter(District.Code=='68999')
@@ -94,6 +102,8 @@ school_type_table <- as.data.frame(
   table(grades$Grade.List, grades$Grade.Count)) |>
   setNames(c('grade_list', 'grade_count', 'freq')) |>
   filter(freq != 0)
+
+write.csv(school_type_table,file='data/school_type.csv')
 ```
 
 ## Missing data
@@ -177,12 +187,6 @@ write.csv(caaspp22_ela_score, file='data/caaspp22_ela_score.csv')
 # Modeling
 Notice that the built-in knn function runs a k-nearest neighbour classification for test set from training set, which does not apply for our situation. 
 
-Potential related: 
-
-*   NN search: https://search.r-project.org/CRAN/refmans/RANN/html/nn2.html
-*   NN match: https://kosukeimai.github.io/MatchIt/reference/method_nearest.html
-*   KNN regression: https://www.datatechnotes.com/2020/10/knn-regresion-example-in-r.html
-
 ```{r importing}
 caaspp22_ela <- read_csv('data/caaspp22_ela_demo.csv') %>%
     # drop the column to set School.Code as index
@@ -222,6 +226,7 @@ Before normalization, we found out that there is an outlier (6421) that is way g
 ## Nearest Neighbor
 
 ```{r modeling}
+#NN search: https://search.r-project.org/CRAN/refmans/RANN/html/nn2.html
 nearest <- nn2(caaspp22_ela, caaspp22_ela)
 ```
 
@@ -269,32 +274,157 @@ write.csv(top10_ravenswood, file='data/top10_ravenswood.csv')
 ## Hierarchical Clustering
 
 ```{r hclust}
+#http://www.sthda.com/english/wiki/wiki.php?id_contents=8098
 hclusters <- hclust(dist(caaspp22_ela))
 plot(hclusters) # uneven distribution over 4 clusters
 ```
 
+```{r hclust_eclust}
+# Enhanced hierarchical clustering
+res.hc <- eclust(caaspp22_ela, "hclust", k = 4,
+                method = "ward.D2", graph = FALSE) 
+head(res.hc$cluster, 15)
+
+#fviz_dend(res.hc, rect = TRUE, show_labels = FALSE, cex = 0.5) 
+```
+
 ## K-means Clustering
 ```{r pca}
-res.pca <- prcomp(caaspp22_ela, center = TRUE,scale. = TRUE)
-print(res.pca)
-fviz_eig(res.pca)
+# scale. = FALSE/TRUE will return different proportion of variance explained
+# but the contributions of each variable look alike
+res.pca <- prcomp(caaspp22_ela, center = TRUE, scale. = TRUE)
+summary(res.pca)
+
+pcaCharts <- function(x) {
+    x.var <- x$sdev ^ 2
+    x.pvar <- x.var/sum(x.var)
+    print("proportions of variance:")
+    print(x.pvar)
+    
+    par(mfrow=c(2,2))
+    plot(x.pvar,xlab="Principal component", ylab="Proportion of variance explained", ylim=c(0,1), type='b')
+    plot(cumsum(x.pvar),xlab="Principal component", ylab="Cumulative Proportion of variance explained", ylim=c(0,1), type='b')
+    screeplot(x)
+    screeplot(x,type="l")
+    par(mfrow=c(1,1))
+    corrplot(res.pca$rotation, is.corr=TRUE)
+    corrplot(res.pca$rotation, is.corr=FALSE)
+}
+
+pcaCharts(res.pca)
+
 fviz_pca_var(res.pca,
              col.var = "contrib", # Color by contributions to the PC
-             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
-             repel = TRUE     # Avoid text overlapping
+             gradient.cols = c("#868686FF", "#E7B800", "#FC4E07"),
+             repel = TRUE,    # Avoid text overlapping
              )
+
+caaspp22_ela_pca = as.data.frame(-res.pca$x[,1:2])
 ```
 
 
+```{r kmeans_nclusters}
+fviz_nbclust(caaspp22_ela_pca, 
+             kmeans, 
+             method='wss' # the elbow shows up when k = 4
+             #method='silhouette' # similarly suggest k = 3
+             )
+```
+
 ```{r kmeans}
-#library(cluster)
-library(factoextra)
-library(ggpubr)
-
-fviz_nbclust(caaspp22_ela, kmeans, method='wss')
-set.seed(1234)
+res.km3 <- kmeans(caaspp22_ela_pca, 3)
+res.km4 <- kmeans(caaspp22_ela_pca, 4)
 #concern: not exactly same size
-km <- kmeans(caaspp22_ela, 4)
-fviz_cluster(km, data=caaspp22_ela, geom="point")
+print(res.km4)
+fviz_cluster(res.km4, data=caaspp22_ela, 
+             geom="point")
 
+#It’s possible to compute the mean of each variables by clusters using the original data:
+#aggregate(USArrests, by=list(cluster=km.res$cluster), mean)
+```
+
+```{r kmeans_eclust}
+res.km3.eclust <- eclust(caaspp22_ela, "kmeans", k = 3,
+                 nstart = 25, graph = FALSE)
+res.km4.eclust <- eclust(caaspp22_ela, "kmeans", k = 4,
+                 nstart = 25, graph = FALSE)
+
+fviz_cluster(res.km3.eclust,
+            geom = "point",
+            ellipse.type = "norm",
+            ellipse.level = 0.95,
+            ellipse.alpha = 0.2,
+            pointsize = 0.8,
+            ggtheme=theme_bw())
+             
+fviz_cluster(res.km4.eclust,
+            geom = "point",
+            ellipse.type = "norm",
+            ellipse.level = 0.95,
+            ellipse.alpha = 0.2,
+            pointsize = 0.8,
+            ggtheme=theme_bw())
+             
+fviz_silhouette(res.km3.eclust)
+fviz_silhouette(res.km4.eclust)
+```
+
+```{r cluster_hybrid}
+#http://www.sthda.com/english/wiki/wiki.php?id_contents=8098
+```
+
+## KNN regression
+```{r KNN_regression}
+
+#KNN regression: https://www.datatechnotes.com/2020/10/knn-regresion-example-in-r.html
+
+df <- readr::read_csv('data/caaspp22_ela_score.csv') |>
+    # drop the column to set School.Code as index
+    tibble::column_to_rownames(var = 'School.Code') |>
+    # 223 missing values in Perc%. Potentially bc OG num is 0, then impute 0? drop for now
+    tidyr::drop_na() |>
+    # scale every column
+    dplyr::mutate(across(2:16, scale))
+
+# ravenswood results as test set 
+test <- df |>
+  dplyr::filter(rownames(df) %in% ravenswood_school_codes)
+test_x = test[, -c(1,17)]
+test_y = test[, 17]
+
+# create train and validation set 
+df <- df |> 
+  dplyr::filter(!rownames(df) %in% ravenswood_school_codes) 
+train <- df |> 
+  dplyr::sample_frac(0.85)
+val  <- dplyr::anti_join(df, train, by ='...1')
+
+train_x = train[, -c(1,17)]
+train_y = train[, 17]
+
+val_x = val[, -c(1,17)]
+val_y = val[, 17]
+
+# train the KNN model 
+knnmodel = knnreg(train_x, train_y)
+str(knnmodel)
+
+# predict on the validation set and check accuracy
+pred_y = predict(knnmodel, data.frame(val_x))
+
+mse = mean((val_y - pred_y)^2)
+mae = caret::MAE(val_y, pred_y)
+rmse = caret::RMSE(val_y, pred_y)
+
+cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
+
+# predict on ravenswood schools
+pred_y = predict(knnmodel, data.frame(test_x))
+print(data.frame(test_y, pred_y))
+
+mse = mean((test_y - pred_y)^2)
+mae = caret::MAE(test_y, pred_y)
+rmse = caret::RMSE(test_y, pred_y)
+
+cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
 ```
