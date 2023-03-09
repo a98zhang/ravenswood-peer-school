@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-# import data
+# Import data
 
 For more data field references: https://caaspp-elpac.ets.org/caaspp/ResearchFileFormatSB?ps=true&lstTestYear=2022&lstTestType=B
 
@@ -32,6 +32,7 @@ library(ggpubr)
 library(corrplot)
 
 library(caret) #KNN regression
+library(glmnet) #LASSO regression
 
 set.seed(42)
 ```
@@ -40,8 +41,8 @@ set.seed(42)
 caaspp22 <- read.table('data/caaspp.txt',sep='^', header=TRUE)
 student_groups <- read_excel('data/lookup.xlsx', sheet = "student_groups")
 entities <- read_csv('data/entities.csv')
-ravenswood <- read_csv('data/rvsw.csv') 
-bh <- read_csv('data/bh.csv') 
+#ravenswood <- read_csv('data/rvsw.csv') 
+#bh <- read_csv('data/bh.csv') 
 ```
 
 ```{r exporting, include=FALSE}
@@ -55,28 +56,21 @@ bh <- read_csv('data/bh.csv')
 
 # Wrangling
 
-```{r full-data}
-select_cols <- c('School.Code',
-                  'Student.Group.ID',
-                  'Students.Tested')
-
-select_groups <- c(1, 128, 31, 170, 75, 76, 74, 77, 78, 79, 80, 144, 4, 90, 121)
-
-caaspp22_ela_pivoted <- caaspp22 %>% 
-    # Grade 13 means all grades, Test.ID 1 means SB - English Language Arts/Literacy,
-    filter(Grade==13 & Test.ID==1) %>%
-    # Type.ID 7 means public schools
-    filter(Type.ID==7 | Type.ID==9 | Type.ID==10) %>%
-    select(all_of(select_cols)) %>%
-    filter(Student.Group.ID %in% select_groups) %>%
-    left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
-    rename("Demographic.ID.Num" = "Demographic ID Num",
-           "Demographic.Name" = "Demographic Name") %>%
-    select(all_of(c('School.Code',
-                  'Students.Tested',
-                  'Demographic.Name'))) %>%
-    pivot_wider(names_from = Demographic.Name, values_from = 'Students.Tested')
-```
+<div class="alert alert-danger">
+TODO:
+<form>
+  <input type="checkbox">
+  <label> generate an equivalent dataset for Test.ID==2, i.e. math results </label><br>
+  <input type="checkbox">
+  <label> decide on grade list > type of schools </label><br> 
+  <input type="checkbox">
+  <label> decide whether to include charter schools </label><br>
+  <input type="checkbox">
+  <label> is "declined to state" a meaningful feature? </label><br>
+  <input type="checkbox">
+  <label> are we settling on Ever-EL? Austin suggests "Currently EL/or not" [preferred] </label><br>
+</form>
+</div>
 
 ```{r school_type}
 caaspp22_grade <- caaspp22 |> 
@@ -106,22 +100,123 @@ school_type_table <- as.data.frame(
 write.csv(school_type_table,file='data/school_type.csv')
 ```
 
+In my mind, there are two practical ways of trying to tackle the inconsistency:
+1. Take all the schools because although they are outliers, they might still be performing very well (or very poorly)
+2. Eliminate the non-traditional schools because they are probably not representative of schools as a whole and are likely going through some type of transition (opening/closing/expanding)
+ 
+Looking at the data you provided, I think that I would lean towards option two. Tentatively, I would include schools with the following grade spans:
+
+* 3,4,5
+* 3,4,5,6
+* 3,4,5,6,7,8
+* 3,4,5,6,7,8,11
+* 6,7,8
+* 6,7,8,11
+* 7,8
+* 7,8,11
+ 
+This includes 74% of the data (7629/10258 schools) and would give more confidence that schools are more directly comparable. There is definitely an argument to be made for being even more restrictive and matching the grade spans in Ravenswood (3-5 and 6-8), but that includes only 34% of the data. Further, I would argue that there is still value in comparing schools with different grade spans. But I’m 100% open to hearing your thoughts on this as well.
+ 
+Depending on how you structured your data, you might be confronted with the question that I was – how do I count a school that have grade spans 3-8? With my data structure, I was able to separate the academic data from the demographic data. In other words, I kept the demographics of the whole school (all grade levels included), but split the academic results into elementary (3-5) and middle (6-8) bands. I think there are definitely other ways to approach this problem as well.
+
+```{r full-data}
+select_cols <- c('School.Code',
+                  'Student.Group.ID',
+                  'Students.Tested')
+
+# All Students	001
+# Disability Status	Reported disabilities	128
+# Economic Status	Economically disadvantaged	031
+# English-Language Fluency	Ever-EL	170
+# Race and Ethnicity	
+## American Indian or Alaska Native	075, Asian	076, Black or African American	074
+## Filipino	077, Hispanic or Latino	078, Native Hawaiian or Pacific Islander	079
+## White	080, Two or more races	144
+# Gender	Female	004
+# Parent Education	
+## Not a high school graduate	090,	Declined to state	121
+select_groups <- c(1, 128, 31, 170, 75, 76, 74, 77, 78, 79, 80, 144, 4, 90, 121)
+
+caaspp22_ela_pivoted <- caaspp22 %>% 
+  # Grade 13 means all grades, Test.ID = 1 (ELA)
+  filter(Grade==13 & Test.ID==1) %>%
+  # public schools (7), Direct(9)/Locally(10) Funded Charter School
+  filter(Type.ID==7 | Type.ID==9 | Type.ID==10) %>%
+  select(all_of(select_cols)) %>%
+  filter(Student.Group.ID %in% select_groups) %>%
+  # merging on student group name
+  left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
+  rename("Demographic.ID.Num" = "Demographic ID Num",
+         "Demographic.Name" = "Demographic Name") %>%
+  select(all_of(c('School.Code',
+                  'Students.Tested',
+                  'Demographic.Name'))) %>%
+  # pivot from long from to wide
+  # each student group for a school is pivoted from a row to a val in column
+  pivot_wider(names_from = Demographic.Name, values_from = 'Students.Tested')
+```
+
+After we pivot the original dataset, we have 10257 rows (public schools, direct funded charter school and locally funded) and 16 variables (school code, school size, and other 14 student group size). for the school size as well as the size of each student group, the value in the cell is simply the cardinality/count.
+
 ## Missing data
 
+Noticeably there are a lot of missing values. For some of the student subgroups, the number of missing values are as high as more than 50%. In average, there are more than 2 missing values for every row. The specific distribution could be seen below.
+
+Besides `NA` value, there are also a lot of `*` in the table. These two types of missing values are generated by two different mechanism:
+
+* `NA`: comes from the pivoting process, i.e. there is not even a row for that specific student group for that specific school
+* `*`: comes from the original dataset (the original dataset has no `NA` value) It is for privacy reasons, and theoretically indicates small values. 
+
+```{r inspect-missing}
+# NA for original data
+caaspp22 %>% summarise_all(~ sum(is.na(.))) # NA in each column
+table(rowSums(is.na(caaspp22))) # NA in each row
+
+# NA for pivoted 
+caaspp22_ela_pivoted %>% summarise_all(~ sum(is.na(.))) # NA in each column
+table(rowSums(is.na(caaspp22_ela_pivoted))) # NA in each row
+
+count_asterick <- function(x) length(which(x == '*'))
+
+# * for original data
+apply(caaspp22, 2, count_asterick) # * in each column
+table(apply(caaspp22, 1, count_asterick)) # * in each row
+
+# * for pivoted
+apply(caaspp22_ela_pivoted, 2, count_asterick) # * in each column
+table(apply(caaspp22_ela_pivoted, 1, count_asterick)) # * in each row
+
+```
+
+The way we handle the missing values involve two steps. For all `*` cells, we replace it with n=1 to show it is an arbitrarily small value. For all `NA` cells, we replace it with 0 assuming the reason why there is missing row is because the school does not have that type of students. 
+
+
+<div class="alert alert-danger">
+TODO:
+<form>
+  <input type="checkbox">
+  <label> consider dropping all 223 schools where 0 students, or 287 schools with `*` in `All Students` column </label><br>
+  <input type="checkbox">
+  <label> we should drop those schools with missing `Mean.Scale.Score` data  </label><br> 
+</form>
+</div>
+
 ```{r full-data-missing-val}
-caaspp22_ela_filled <- data.frame(caaspp22_ela_pivoted)
-caaspp22_ela_filled[caaspp22_ela_filled=='*'] <- '1'
-caaspp22_ela_filled[is.na(caaspp22_ela_filled)] <- '0'
+caaspp22_ela_filled <- data.frame(caaspp22_ela_pivoted) # duplicate 
+caaspp22_ela_filled[caaspp22_ela_filled=='*'] <- '1'    # *s replaced by 1
+caaspp22_ela_filled[is.na(caaspp22_ela_filled)] <- '0'  # NA replaced by 0
 caaspp22_ela_filled <- caaspp22_ela_filled %>% mutate_if(is.character, as.numeric)
 ```
 
 ```{r rename-export}
 col_names <- names(caaspp22_ela_filled)[3:length(names(caaspp22_ela_filled))]
 for (col_name in col_names) {
+  # rename with the prefix - Percentage
   name <- paste0('Perc.', col_name)
+  # calculate the percentage (%)
   caaspp22_ela_filled[name] <- caaspp22_ela_filled[col_name] / caaspp22_ela_filled$`All.Students` * 100
 }
-caaspp22_ela_demo <- caaspp22_ela_filled %>% select(-col_names)
+caaspp22_ela_demo <- caaspp22_ela_filled %>% select(-all_of(col_names))
 
 write.csv(caaspp22_ela_demo,file='data/caaspp22_ela_demo.csv')
 ```
@@ -132,9 +227,13 @@ write.csv(caaspp22_ela_demo,file='data/caaspp22_ela_demo.csv')
 #df by grade
 caaspp_ela_outcome <- caaspp22 |>
   select(School.Code, Student.Group.ID, Test.ID, Grade, Students.Enrolled, Students.Tested, Mean.Scale.Score) |>
+  # select 10258 schools (1 more since there is one school only have math scores)
   filter(School.Code > 0) |>
+  # select only ELA results
   filter(Test.ID==1) |>
+  # select `All Students`
   filter(Student.Group.ID == 1) |>
+  # only for grade 3 - 8
   filter(Grade == 3 | Grade == 4 | Grade == 5 | Grade == 6 | Grade == 7 | Grade == 8) |>
   select(School.Code, Grade, Students.Enrolled, Students.Tested, Mean.Scale.Score)
 
@@ -216,7 +315,6 @@ normalize <- function(x) {
   x <- log(x + 1e-10)
   return ((x - min(x)) / (max(x) - min(x)) * 100) 
 }
-
 
 caaspp22_ela['All.Students'] <- lapply(caaspp22_ela['All.Students'], normalize)
 ```
@@ -335,7 +433,7 @@ fviz_nbclust(caaspp22_ela_pca,
 res.km3 <- kmeans(caaspp22_ela_pca, 3)
 res.km4 <- kmeans(caaspp22_ela_pca, 4)
 #concern: not exactly same size
-print(res.km4)
+#print(res.km4)
 fviz_cluster(res.km4, data=caaspp22_ela, 
              geom="point")
 
@@ -427,4 +525,39 @@ mae = caret::MAE(test_y, pred_y)
 rmse = caret::RMSE(test_y, pred_y)
 
 cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
+```
+
+## OLS & LASSO
+
+One limitation of KNN is its lack in explanability. To complement it, we use other methods to help understand. 
+
+First we conduct regular multivariate linear regression.
+
+```{r OLS}
+
+# multivariate OLS
+model <- lm(Avg.Score.Dist ~ ., data = df[, -1])
+summary(model)
+```
+
+Then we use a LASSO regression to conduct feature selection. 
+
+```{r LASSO}
+mod_cv <- cv.glmnet(x=as.matrix(df[, -c(1,17)]), 
+                    y=df[, 17], 
+                    family='gaussian',
+                    alpha=1)
+
+# cvm : The mean cross-validated error - a vector of length length(lambda)
+# lambda.min : the λ at which the minimal MSE is achieved.
+# lambda.1se : the largest λ at which the MSE is within one standard error of the minimal MSE.
+   
+plot(log(mod_cv$lambda), mod_cv$cvm)
+plot(mod_cv) 
+coef(mod_cv, c(mod_cv$lambda.min,
+               mod_cv$lambda.1se))
+print(paste(mod_cv$lambda.min,
+            log(mod_cv$lambda.min)))
+print(paste(mod_cv$lambda.1se,
+            log(mod_cv$lambda.1se)))
 ```
