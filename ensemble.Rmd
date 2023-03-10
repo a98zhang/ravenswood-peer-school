@@ -1,0 +1,597 @@
+---
+title: "Ravenswood Peer School Working File"
+author: "Qingyang Zhang & Dorna Abdi"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Import data
+
+For more data field references: https://caaspp-elpac.ets.org/caaspp/ResearchFileFormatSB?ps=true&lstTestYear=2022&lstTestType=B
+
+```{r importing_packages, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(Hmisc) #https://CRAN.R-project.org/package=Hmisc
+library(stargazer)
+library(RANN) #https://cran.r-project.org/web/packages/RANN/RANN.pdf
+
+library(stats) #hclust
+library(FactoMineR)
+library(factoextra)
+library(cluster)
+library(ggpubr)
+library(corrplot)
+
+library(caret) #KNN regression
+library(glmnet) #LASSO regression
+
+set.seed(42)
+```
+
+```{r loading_data, include=FALSE}
+caaspp22 <- read.table('data/caaspp.txt',sep='^', header=TRUE)
+student_groups <- read_excel('data/lookup.xlsx', sheet = "student_groups")
+entities <- read_csv('data/entities.csv')
+#ravenswood <- read_csv('data/rvsw.csv') 
+#bh <- read_csv('data/bh.csv') 
+```
+
+```{r exporting, include=FALSE}
+#write.csv(entities,file='data/entities.csv')
+#write.csv(caaspp22,file='data/caaspp22.csv')
+#ravenswood <- caaspp22 %>% filter(District.Code=='68999')
+#write.csv(ravenswood,file='data/rvsw.csv')
+#bh <- caaspp22 %>% filter(School.Code=='6044309')
+#write.csv(bh,file='data/bh.csv')
+```
+
+# Wrangling
+
+<div class="alert alert-danger">
+TODO:
+<form>
+  <input type="checkbox">
+  <label> generate an equivalent dataset for Test.ID==2, i.e. math results </label><br>
+  <input type="checkbox">
+  <label> decide on grade list > type of schools </label><br>
+  <input type="checkbox">
+  <label> there are still 57 missing values in score when merging with demo </label><br>
+</form>
+
+Decisions:
+
+* keep charter schools for now
+* drop "declined to state" and keep only one variable for parental education
+* use "Currently EL/or not" as the one variable for ELLs
+</div>
+
+```{r full-data}
+select_cols <- c('School.Code',
+                  'Student.Group.ID',
+                  'Students.Tested')
+
+# All Students	001
+# Disability Status	Reported disabilities	128
+# Economic Status	Economically disadvantaged	031
+# English-Language Fluency EL (English learner)	160
+# Race and Ethnicity	
+## American Indian or Alaska Native	075, Asian	076, Black or African American	074
+## Filipino	077, Hispanic or Latino	078, Native Hawaiian or Pacific Islander	079
+## White	080, Two or more races	144
+# Gender	Female	004
+# Parent Education	
+## Not a high school graduate	090
+select_groups <- c(1, 128, 31, 160, 75, 76, 74, 77, 78, 79, 80, 144, 4, 90)
+
+caaspp22_ela_pivoted <- caaspp22 %>% 
+  # Grade 13 means all grades, Test.ID = 1 (ELA)
+  filter(Grade==13 & Test.ID==1) %>%
+  # public schools (7), Direct(9)/Locally(10) Funded Charter School
+  filter(Type.ID==7 | Type.ID==9 | Type.ID==10) %>%
+  select(all_of(select_cols)) %>%
+  filter(Student.Group.ID %in% select_groups) %>%
+  # merging on student group name
+  left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) %>% 
+  rename("Demographic.ID.Num" = "Demographic ID Num",
+         "Demographic.Name" = "Demographic Name") %>%
+  select(all_of(c('School.Code',
+                  'Students.Tested',
+                  'Demographic.Name'))) %>%
+  # pivot from long from to wide
+  # each student group for a school is pivoted from a row to a val in column
+  pivot_wider(names_from = Demographic.Name, values_from = 'Students.Tested')
+```
+
+After we pivot the original dataset, we have 10257 rows (public schools, direct funded charter school and locally funded) and 16 variables (school code, school size, and other 14 student group size). for the school size as well as the size of each student group, the value in the cell is simply the cardinality/count.
+
+## Select Sample
+
+### Grade Spans
+```{r school_type}
+caaspp22_grade <- caaspp22 |> 
+  group_by(School.Code) |> # 10,258 Unique School Codes
+  filter(School.Code != 0 & Grade != 13) |>
+  mutate(Grade.Count = n_distinct(Grade)) |>
+  mutate(Grade.List = paste0(unique(Grade), collapse = ','))
+
+grade_count <- caaspp22 |> 
+  group_by(School.Code) |> # 10,258 Unique School Codes
+  filter(School.Code != 0 & Grade != 13) |>
+  summarise(Grade.Count = n_distinct(Grade))
+
+grade_list <- caaspp22 |> 
+  group_by(School.Code) |> # 10,258 Unique School Codes
+  filter(School.Code != 0 & Grade != 13) |>
+  summarise(Grade.List = paste0(unique(Grade), collapse = ','))
+
+grades <- grade_count |>
+  left_join(y=grade_list, by=c("School.Code" = "School.Code"))
+
+school_type_table <- as.data.frame(
+  table(grades$Grade.List, grades$Grade.Count)) |>
+  setNames(c('grade_list', 'grade_count', 'freq')) |>
+  filter(freq != 0)
+
+# write.csv(school_type_table,file='data/school_type.csv')
+
+typical_span <- c(
+  '3,4,5', '3,4,5,6', '3,4,5,6,7,8', '3,4,5,6,7,8,11', '6,7,8', '6,7,8,11', '7,8', '7,8,11')
+
+grade_atypical_span <- grades |>
+  filter(!Grade.List %in% typical_span)
+
+is_grade_atypical_span <- grade_atypical_span$School.Code
+```
+
+In our attempt to tackle the inconsistency in the combinations of grade levels, we eliminate the non-traditional schools because they are probably not representative of schools as a whole and are likely going through some type of transition (opening/closing/expanding). We consulted Batson from Ravenswood District, and decided to include schools with the following grade spans:
+
+* 3,4,5
+* 3,4,5,6
+* 3,4,5,6,7,8
+* 3,4,5,6,7,8,11
+* 6,7,8
+* 6,7,8,11
+* 7,8
+* 7,8,11
+ 
+This includes 74% of the data (7629/10258 schools) and would give more confidence that schools are more directly comparable. 
+
+### Outcome inspection
+
+```{r scores-missing}
+grade_non_missing <- caaspp22 |>
+  # select 10258 schools (1 more since there is one school only have math scores)
+  filter(School.Code > 0) |>
+  # select only ELA results
+  filter(Test.ID==1) |>
+  # select `All Students`
+  filter(Student.Group.ID == 1) |>
+  filter(Grade != 13) |>
+  # select rows where `Score` is '' or '*'
+  filter(Mean.Scale.Score != '' & Mean.Scale.Score != '*') |> 
+  group_by(School.Code) |>
+  summarise(Non.Missing.Grade.Count = n_distinct(Grade), 
+            Non.Missing.Grade.List = paste0(unique(Grade), collapse = ','))
+
+# find schools where there are all missing grades 
+grade_all_missing <- grade_non_missing |>
+  right_join(y=grades, by = c("School.Code" = "School.Code")) |>
+  filter(is.na(Non.Missing.Grade.Count))
+
+# find schools where there is only one non-missing grade and it is grade 11
+grade_all_missing_but_11 <- grade_non_missing |>
+  right_join(y=grades, by = c("School.Code" = "School.Code")) |>
+  filter(Non.Missing.Grade.Count == 1 & Grade.Count > 1 & Non.Missing.Grade.List == '11')
+
+is_grade_all_missing <- grade_all_missing$School.Code
+is_grade_all_missing_but_11 <- grade_all_missing_but_11$School.Code
+```
+
+
+### Missing values 
+
+Noticeably there are a lot of missing values. For some of the student subgroups, the number of missing values are as high as more than 50%. In average, there are more than 2 missing values for every row. The specific distribution could be seen below.
+
+Besides `NA` value, there are also a lot of `*` in the table. These two types of missing values are generated by two different mechanism:
+
+* `NA`: comes from the pivoting process, i.e. there is not even a row for that specific student group for that specific school
+* `*`: comes from the original dataset (the original dataset has no `NA` value) It is for privacy reasons, and theoretically indicates small values. 
+
+```{r inspect-missing}
+# NA for original data
+caaspp22 %>% summarise_all(~ sum(is.na(.))) # NA in each column
+table(rowSums(is.na(caaspp22))) # NA in each row
+
+# NA for pivoted 
+caaspp22_ela_pivoted %>% summarise_all(~ sum(is.na(.))) # NA in each column
+table(rowSums(is.na(caaspp22_ela_pivoted))) # NA in each row
+
+count_asterick <- function(x) length(which(x == '*'))
+
+# * for original data
+apply(caaspp22, 2, count_asterick) # * in each column
+table(apply(caaspp22, 1, count_asterick)) # * in each row
+
+# * for pivoted
+apply(caaspp22_ela_pivoted, 2, count_asterick) # * in each column
+table(apply(caaspp22_ela_pivoted, 1, count_asterick)) # * in each row
+```
+
+The way we handle the missing values involve two steps. For all `*` cells, we replace it with n=1 to show it is an arbitrarily small value. For all `NA` cells, we replace it with 0 assuming the reason why there is missing row is because the school does not have that type of students. 
+
+In addition to replacing missing values by imputing, we also process them by dropping observations.
+
+* we drop all 223 schools where 0 students, or 287 schools with `*` in `All Students` column
+* we drop those schools with missing `Mean.Scale.Score` data  
+* we drop those schools with atypical grade scope
+
+```{r full-data-missing-val}
+caaspp22_ela_filled <- data.frame(caaspp22_ela_pivoted) # duplicate 
+  # merge on grade data
+  # merge on outcome data
+
+caaspp22_ela_filled <- caaspp22_ela_filled |>
+  # drop schools with too few students
+  filter(All.Students != 0 & All.Students != '*') |>
+  # drop those schools with missing `Mean.Scale.Score` data  
+  filter(!School.Code %in% is_grade_all_missing)  |> 
+  filter(!School.Code %in% is_grade_all_missing_but_11)  |> 
+  # drop those schools with atypical grade scope
+  filter(!School.Code %in% is_grade_atypical_span) 
+  
+
+caaspp22_ela_filled[caaspp22_ela_filled=='*'] <- '1'    # *s replaced by 1
+caaspp22_ela_filled[is.na(caaspp22_ela_filled)] <- '0'  # NA replaced by 0
+caaspp22_ela_filled <- caaspp22_ela_filled %>% mutate_if(is.character, as.numeric)
+```
+
+
+```{r rename-export}
+col_names <- names(caaspp22_ela_filled)[3:length(names(caaspp22_ela_filled))]
+for (col_name in col_names) {
+  # rename with the prefix - Percentage
+  name <- paste0('Perc.', col_name)
+  # calculate the percentage (%)
+  caaspp22_ela_filled[name] <- caaspp22_ela_filled[col_name] / caaspp22_ela_filled$`All.Students` * 100
+}
+caaspp22_ela_demo <- caaspp22_ela_filled %>% select(-all_of(col_names))
+
+write.csv(caaspp22_ela_demo,file='data/caaspp22_ela_demo.csv')
+```
+
+## Outcome Encoding
+
+```{r scores-distance}
+#df by grade
+caaspp_ela_outcome <- caaspp22 |>
+  select(School.Code, Student.Group.ID, Test.ID, Grade, Students.Enrolled, Students.Tested, Mean.Scale.Score) |>
+  # select 10258 schools (1 more since there is one school only have math scores)
+  filter(School.Code > 0) |>
+  # select only ELA results
+  filter(Test.ID==1) |>
+  # select `All Students`
+  filter(Student.Group.ID == 1) |>
+  # only for grade 3 - 8
+  filter(Grade == 3 | Grade == 4 | Grade == 5 | Grade == 6 | Grade == 7 | Grade == 8) |>
+  select(School.Code, Grade, Students.Enrolled, Students.Tested, Mean.Scale.Score)
+
+#Grade 3 distance from score (2432)
+grade_3 <- caaspp_ela_outcome |>
+  filter(Grade == 3) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2432)
+
+#Grade 4 distance from score (2473)
+grade_4 <- caaspp_ela_outcome |>
+  filter(Grade == 4) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2473)
+
+#Grade 5 distance from score (2502)
+grade_5 <- caaspp_ela_outcome |>
+  filter(Grade == 5) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2502)
+
+#Grade 6 distance from score (2618)
+grade_6 <- caaspp_ela_outcome |>
+  filter(Grade == 6) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2618)
+
+#Grade 7 distance from score (2649)
+grade_7 <- caaspp_ela_outcome |>
+  filter(Grade == 7) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2649)
+
+#Grade 8 distance from score (2668)
+grade_8 <- caaspp_ela_outcome |>
+  filter(Grade == 8) |>
+  mutate(distance_from_score_ela = as.numeric(Mean.Scale.Score) - 2668)
+
+caaspp_ela_score_distance <- rbind(grade_3, grade_4, grade_5, grade_6, grade_7, grade_8) |>
+  na.omit()
+
+caaspp_ela_aggregate <- caaspp_ela_score_distance |>
+  group_by(School.Code) |>
+  summarise_at(vars(distance_from_score_ela), list(name = mean)) |>
+  rename("Avg.Score.Dist"="name")
+
+```
+
+```{r merge-output}
+
+# output a file attaching score results to demo data
+caaspp22_ela_score <- caaspp22_ela_demo |> left_join(y=caaspp_ela_aggregate, by = c("School.Code" = "School.Code"))
+
+write.csv(caaspp22_ela_score, file='data/caaspp22_ela_score.csv')
+```
+
+# Modeling
+
+
+## Pre-processing
+Before running models, we would like to conduct the proper preprocessing. 
+
+```{r importing-preprocessing}
+
+# 7291 Schools with the non-trivial size, proper grade span, and non-missing grades
+caaspp22_ela <- read_csv('data/caaspp22_ela_demo.csv') |>
+    # drop the column to set School.Code as index
+    column_to_rownames(var = 'School.Code') |>
+    select(-'...1') |> 
+    # standardize all columns
+    mutate(across(where(is.numeric), scale))
+
+# no missing values
+# caaspp22_ela[is.na(caaspp22_ela), ]
+```
+Since scaling a variable is a linear transformation and it will not change the distribution of the variable so it does not matter if the variable has a non-normal distribution, we don't have to concern about the outlier School, City of Angels at Los Angeles Unified, which is way greater than all other schools (n=6421>>3763, the second large). 
+
+## Nearest Neighbor
+
+For NN, we use the `nn2` function from `RANN` package, which finds the k nearest neighbours for every point in a given dataset in O(N log N) time using Arya and Mount's ANN library (v1.1.3). The distance is computed using the L2 (Euclidean) metric. For alternative metric, one could see package 'RANN.L1' for the same
+functionality using the L1 (Manhattan, taxicab) metric.
+
+Notice that the built-in knn function runs a k-nearest neighbour classification for test set from training set, which does not apply for our situation. 
+
+```{r modeling}
+#NN search: https://search.r-project.org/CRAN/refmans/RANN/html/nn2.html
+
+# k: The maximum number of nearest neighbours to compute. 
+# to generate top 10 nearest neighbours we set k = 11 to offset oneself
+nearest <- nn2(caaspp22_ela, caaspp22_ela, k=11)
+```
+
+```{r modeling-loop-all}
+ravenswood_school_codes <- caaspp22 %>% 
+                                filter(District.Code=='68999') %>% 
+                                filter(Type.ID==7 | Type.ID==9 | Type.ID==10) %>%
+                                select(School.Code) %>% 
+                                unique() %>% 
+                                .$School.Code
+
+top10_ravenswood <- data.frame(Rank=numeric(0), 
+                               Dist=numeric(0),
+                               School.Code=numeric(0))
+
+for (school in ravenswood_school_codes) {
+  
+  # each ravenswood school has ten rows, i.e. top ten neighbors 
+  row_idx <- which(rownames(caaspp22_ela) == as.character(school)) 
+  top10_id <- nearest$nn.idx[row_idx,]
+  top10_ds <-nearest$nn.dists[row_idx,]
+  
+  # each row a neighbor with info about rank，dist, school.code
+  for (rk in 1:11) {
+    nn_idx <- top10_id[rk]
+    neighbor_code <- rownames(caaspp22_ela)[nn_idx]
+    top10_ravenswood[nrow(top10_ravenswood) + 1, ] <- c(rk-1, top10_ds[rk], neighbor_code)  
+  }
+  
+}
+
+top10_ravenswood <- top10_ravenswood |> 
+  mutate_if(is.character, as.numeric) |>
+  left_join(y=entities, by = c("School.Code" = "School Code")) |>
+  left_join(y=caaspp22_ela_score, by = c("School.Code" = "School.Code"))
+
+write.csv(top10_ravenswood, file='data/top10_ravenswood.csv')
+
+```
+
+## KNN regression
+```{r KNN_regression}
+
+#KNN regression: https://www.datatechnotes.com/2020/10/knn-regresion-example-in-r.html
+
+df <- readr::read_csv('data/caaspp22_ela_score.csv') |>
+    # drop the column to set School.Code as index
+    tibble::column_to_rownames(var = 'School.Code') |>
+    # scale every column
+    dplyr::mutate(across(2:16, scale))
+
+# ravenswood results as test set 
+test <- df |>
+  dplyr::filter(rownames(df) %in% ravenswood_school_codes)
+test_x = test[, -c(1, length(df))]
+test_y = test[, length(df)]
+
+# create train and validation set 
+df <- df |> 
+  dplyr::filter(!rownames(df) %in% ravenswood_school_codes) 
+train <- df |> 
+  dplyr::sample_frac(0.85)
+val  <- dplyr::anti_join(df, train, by ='...1')
+
+train_x = train[, -c(1, length(df))]
+train_y = train[, length(df)]
+
+val_x = val[, -c(1, length(df))]
+val_y = val[, length(df)]
+
+# train the KNN model 
+knnmodel = knnreg(train_x, train_y)
+str(knnmodel)
+
+# predict on the validation set and check accuracy
+pred_y = predict(knnmodel, data.frame(val_x))
+
+mse = mean((val_y - pred_y)^2)
+mae = caret::MAE(val_y, pred_y)
+rmse = caret::RMSE(val_y, pred_y)
+
+cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
+
+# predict on ravenswood schools
+pred_y = predict(knnmodel, data.frame(test_x))
+print(data.frame(test_y, pred_y))
+
+mse = mean((test_y - pred_y)^2)
+mae = caret::MAE(test_y, pred_y)
+rmse = caret::RMSE(test_y, pred_y)
+
+cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
+```
+
+## OLS & LASSO
+
+One limitation of KNN is its lack in explanability. To complement it, we use other methods to help understand. 
+
+First we conduct regular multivariate linear regression.
+
+```{r OLS}
+
+# multivariate OLS
+model <- lm(Avg.Score.Dist ~ ., data = df[, -1])
+summary(model)
+```
+
+Then we use a LASSO regression to conduct feature selection. 
+
+```{r LASSO}
+mod_cv <- cv.glmnet(x=as.matrix(df[, -c(1, length(df))]), 
+                    y=df[, length(df)], 
+                    family='gaussian',
+                    alpha=1)
+
+# cvm : The mean cross-validated error - a vector of length length(lambda)
+# lambda.min : the λ at which the minimal MSE is achieved.
+# lambda.1se : the largest λ at which the MSE is within one standard error of the minimal MSE.
+   
+plot(log(mod_cv$lambda), mod_cv$cvm)
+plot(mod_cv) 
+coef(mod_cv, c(mod_cv$lambda.min,
+               mod_cv$lambda.1se))
+print(paste(mod_cv$lambda.min,
+            log(mod_cv$lambda.min)))
+print(paste(mod_cv$lambda.1se,
+            log(mod_cv$lambda.1se)))
+```
+
+## K-means Clustering
+```{r pca}
+# scale. = FALSE/TRUE will return different proportion of variance explained
+# but the contributions of each variable look alike
+res.pca <- prcomp(caaspp22_ela, center = FALSE, scale. = FALSE)
+summary(res.pca)
+
+pcaCharts <- function(x) {
+    x.var <- x$sdev ^ 2
+    x.pvar <- x.var/sum(x.var)
+    print("proportions of variance:")
+    print(x.pvar)
+    
+    par(mfrow=c(2,2))
+    plot(x.pvar,xlab="Principal component", ylab="Proportion of variance explained", ylim=c(0,1), type='b')
+    plot(cumsum(x.pvar),xlab="Principal component", ylab="Cumulative Proportion of variance explained", ylim=c(0,1), type='b')
+    screeplot(x)
+    screeplot(x,type="l")
+    par(mfrow=c(1,1))
+    corrplot(res.pca$rotation, is.corr=TRUE)
+    corrplot(res.pca$rotation, is.corr=FALSE)
+}
+
+pcaCharts(res.pca)
+
+fviz_pca_var(res.pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#868686FF", "#E7B800", "#FC4E07"),
+             repel = TRUE,    # Avoid text overlapping
+             )
+
+caaspp22_ela_pca = as.data.frame(-res.pca$x[,1:2])
+```
+
+
+```{r kmeans_nclusters}
+fviz_nbclust(caaspp22_ela_pca, 
+             kmeans, 
+             method='wss' # the elbow shows up when k = 4
+             #method='silhouette' # similarly suggest k = 3
+             )
+```
+
+```{r kmeans}
+res.km3 <- kmeans(caaspp22_ela_pca, 3)
+res.km4 <- kmeans(caaspp22_ela_pca, 4)
+#concern: not exactly same size
+#print(res.km4)
+fviz_cluster(res.km4, data=caaspp22_ela, 
+             geom="point")
+
+#It’s possible to compute the mean of each variables by clusters using the original data:
+#aggregate(USArrests, by=list(cluster=km.res$cluster), mean)
+```
+
+```{r kmeans_eclust}
+res.km3.eclust <- eclust(caaspp22_ela, "kmeans", k = 3,
+                 nstart = 25, graph = FALSE)
+res.km4.eclust <- eclust(caaspp22_ela, "kmeans", k = 4,
+                 nstart = 25, graph = FALSE)
+
+fviz_cluster(res.km3.eclust,
+            geom = "point",
+            ellipse.type = "norm",
+            ellipse.level = 0.95,
+            ellipse.alpha = 0.2,
+            pointsize = 0.8,
+            ggtheme=theme_bw())
+             
+fviz_cluster(res.km4.eclust,
+            geom = "point",
+            ellipse.type = "norm",
+            ellipse.level = 0.95,
+            ellipse.alpha = 0.2,
+            pointsize = 0.8,
+            ggtheme=theme_bw())
+             
+fviz_silhouette(res.km3.eclust)
+fviz_silhouette(res.km4.eclust)
+```
+
+## Hierarchical Clustering
+
+```{r hclust}
+#http://www.sthda.com/english/wiki/wiki.php?id_contents=8098
+hclusters <- hclust(dist(caaspp22_ela))
+plot(hclusters) # uneven distribution over 4 clusters
+```
+
+```{r hclust_eclust}
+# Enhanced hierarchical clustering
+res.hc <- eclust(caaspp22_ela, "hclust", k = 4,
+                method = "ward.D2", graph = FALSE) 
+head(res.hc$cluster, 15)
+
+#fviz_dend(res.hc, rect = TRUE, show_labels = FALSE, cex = 0.5) 
+```
+
+```{r cluster_hybrid}
+#http://www.sthda.com/english/wiki/wiki.php?id_contents=8098
+```
