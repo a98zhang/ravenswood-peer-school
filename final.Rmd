@@ -33,6 +33,8 @@ library(corrplot)
 
 library(caret) #KNN regression
 library(glmnet) #LASSO regression
+library(plyr)
+library(reshape2)
 
 set.seed(42)
 ```
@@ -84,11 +86,11 @@ select_cols <- c('School.Code',
 # Economic Status	Economically disadvantaged	031
 # English-Language Fluency EL (English learner)	160
 # Race and Ethnicity	
-## American Indian or Alaska Native	075, Asian	076, Black or African American	074
-## Filipino	077, Hispanic or Latino	078, Native Hawaiian or Pacific Islander	079
-## White	080, Two or more races	144
-# Gender	Female	004
-# Parent Education	
+## American Indian or Alaska Native	075, Asian 076, Black or African American 074
+## Filipino	077, Hispanic or Latino	078, Native Hawaiian or Pacific Islander 079
+## White 080, Two or more races	144
+# Gender Female	004
+# Parent Education
 ## Not a high school graduate	090
 select_groups <- c(1, 128, 31, 160, 75, 76, 74, 77, 78, 79, 80, 144, 4, 90)
 
@@ -112,6 +114,11 @@ caaspp22_ela_pivoted <- caaspp22 %>%
 ```
 
 After we pivot the original dataset, we have 10257 rows (public schools, direct funded charter school and locally funded) and 16 variables (school code, school size, and other 14 student group size). for the school size as well as the size of each student group, the value in the cell is simply the cardinality/count.
+
+Abnormality:
+* School Code `161242` (New Haven Unified District Level Program - Alameda New Haven Unified) is in english but not in math 
+* School Code `1030873` (Miles W. Culwell Community Day - Fresno Coalinga-Huron Unified) is in math but not in english
+* So in total 10258 schools, with only 10256 schools with both subject tested. 
 
 ## Select Sample
 
@@ -152,7 +159,7 @@ grade_atypical_span <- grades |>
 is_grade_atypical_span <- grade_atypical_span$School.Code
 ```
 
-In our attempt to tackle the inconsistency in the combinations of grade levels, we eliminate the non-traditional schools because they are probably not representative of schools as a whole and are likely going through some type of transition (opening/closing/expanding). We consulted Batson from Ravenswood District, and decided to include schools with the following grade spans:
+In our attempt to tackle the inconsistency in the combinations of grade levels, we eliminate the non-traditional schools because they are probably not representative of schools as a whole and are likely going through some type of transition (opening/closing/expanding). We consulted Austin from Ravenswood District, and decided to include schools with the following grade spans:
 
 * 3,4,5
 * 3,4,5,6
@@ -266,6 +273,53 @@ for (col_name in col_names) {
 caaspp22_ela_demo <- caaspp22_ela_filled %>% select(-all_of(col_names))
 
 write.csv(caaspp22_ela_demo,file='data/caaspp22_ela_demo.csv')
+```
+
+```{r demographic-table}
+caaspp22_demo_summary <- caaspp22 |> 
+  # Grade 13 means all grades, Test.ID = 1 (ELA)
+  filter(Grade==13 & Test.ID==1 & School.Code == 0) |>
+  filter(County.Code == 0 | District.Code == '68999') |>
+  select(all_of(c('District.Code','Student.Group.ID','Students.Tested'))) |>
+  filter(Student.Group.ID %in% select_groups) |>
+  # merging on student group name
+  left_join(y=student_groups, by = c("Student.Group.ID" = "Demographic ID")) |>
+  rename("Demographic.ID.Num" = "Demographic ID Num",
+         "Demographic.Name" = "Demographic Name") |> 
+  select(all_of(c('District.Code',
+                  'Students.Tested',
+                  'Demographic.Name'))) |> 
+  pivot_wider(names_from = Demographic.Name, values_from = 'Students.Tested') |>
+  mutate_if(is.character, as.numeric)
+
+colnames(caaspp22_demo_summary) <-colnames(caaspp22_ela_demo)
+col_names <- names(caaspp22_demo_summary)[3:length(names(caaspp22_demo_summary))]
+for (col_name in col_names) {
+  # calculate the percentage (%)
+  caaspp22_demo_summary[col_name] <- caaspp22_demo_summary[col_name] / caaspp22_demo_summary$`All.Students` * 100
+}
+
+ravenswood_school_codes <- caaspp22 %>% 
+            filter(District.Code=='68999') %>% 
+            #filter(Type.ID==7) %>%
+            select(School.Code) %>% 
+            unique() %>% 
+            .$School.Code
+
+caaspp22_ela_demo <- caaspp22_ela_demo |> 
+  filter(School.Code %in% ravenswood_school_codes) 
+caaspp22_demo_summary <- caaspp22_demo_summary|>
+  bind_rows(caaspp22_ela_demo)|>
+  rename('Code'='School.Code',
+         'Size' = 'All.Students') |>
+  column_to_rownames(var = 'Code') |>
+  mutate_if(is.numeric, round, digits=2)
+
+caaspp22_demo_summary[, 2:length(names(caaspp22_demo_summary))]<- paste0(as.matrix(caaspp22_demo_summary[, 2:length(names(caaspp22_demo_summary))]), '%')
+caaspp22_demo_summary <- t(caaspp22_demo_summary)
+
+#library(xtable)
+#xtable(caaspp22_demo_summary)
 ```
 
 ## Outcome Encoding
@@ -424,7 +478,8 @@ write.csv(top10_ravenswood, file='data/top10_ravenswood.csv')
 ## KNN regression
 ```{r KNN_regression}
 
-#KNN regression: https://www.datatechnotes.com/2020/10/knn-regresion-example-in-r.html
+#KNN regression: https://www.rdocumentation.org/packages/caret/versions/6.0-86/topics/knnreg
+#knnreg {caret}: https://search.r-project.org/CRAN/refmans/caret/html/knnreg.html
 
 df <- readr::read_csv('data/caaspp22_score.csv') |>
     # drop the column to set School.Code as index
@@ -432,7 +487,6 @@ df <- readr::read_csv('data/caaspp22_score.csv') |>
     # scale every column
     dplyr::mutate(across(2:length(df)-2, scale))
 #df[c(length(df)-1, length(df))] <- lapply(df[c(length(df)-1, length(df))], log)
-
 
 # ravenswood results as test set 
 test <- df |>
@@ -455,25 +509,94 @@ train_math = train[, length(df)]
 val_x = val[, -c(1, length(df)-1, length(df))]
 val_ela = val[, length(df)-1]
 val_math = val[, length(df)]
+```
 
+```{r KNN_regression_k}
+
+# K-fold validation for optimal k: https://towardsdatascience.com/beginners-guide-to-k-nearest-neighbors-in-r-from-zero-to-hero-d92cd4074bdb
+
+nfold = 10
+set.seed(1)
+
+# cut() divides the range into several intervals
+folds = seq.int(nrow(df)) %>%
+     cut(breaks = nfold, labels=FALSE) %>%  
+     sample
+
+x = df[, -c(1, length(df)-1, length(df))]
+y_ela = df[, length(df)-1]
+y_math = df[, length(df)]
+
+do.chunk <- function(chunkid, folddef, Xdat, Ydat, k) { 
+    train = (folddef!=chunkid)# training index
+    Xtr = Xdat[train,] # training set by the index
+    Ytr = Ydat[train] # true label in training set
+    Xvl = Xdat[!train,] # test set
+    Yvl = Ydat[!train] # true label in test set
+    knnmodel = knnreg(Xtr, Ytr, k=k)
+    pred_y = predict(knnmodel, data.frame(Xvl))
+    rmse = caret::RMSE(Yvl, pred_y)
+    data.frame(fold=chunkid, val.error = rmse) # test error per fold
+}
+
+# set error.folds to save validation errors
+error.folds.ela=NULL
+error.folds.math=NULL
+# create a sequence of data for k
+kvec = seq(5,80,2)
+
+for (j in kvec) {
+   # apply do.function to each fold
+   tmp_ela = ldply(1:nfold, do.chunk, 
+               folddef=folds, Xdat=x, Ydat=y_ela, k=j) # required arguments
+   tmp_math = ldply(1:nfold, do.chunk, 
+               folddef=folds, Xdat=x, Ydat=y_math, k=j)
+   # track each value of neighbors 
+   tmp_ela$neighbors = j
+   tmp_math$neighbors = j
+   error.folds.ela = rbind(error.folds.ela, tmp_ela)
+   error.folds.math = rbind(error.folds.math, tmp_math)
+}
+```
+
+```{r }
+
+val.error.means = error.folds.ela %>%
+    #group the selected data by neighbors
+    group_by(neighbors) %>%
+    #cacluate CV error for each k
+    summarise_each(funs(mean), val.error) %>%
+    #remove existing grouping
+    ungroup() %>% 
+    filter(val.error==min(val.error))
+# Best number of neighbors
+# if there is a tie, pick larger number of neighbors for simpler model
+numneighbor = max(val.error.means$neighbors)
+numneighbor
+
+val.error.means = error.folds.math %>%
+    #group the selected data by neighbors
+    group_by(neighbors) %>%
+    #cacluate CV error for each k
+    summarise_each(funs(mean), val.error) %>%
+    #remove existing grouping
+    ungroup() %>% 
+    filter(val.error==min(val.error))
+# Best number of neighbors
+# if there is a tie, pick larger number of neighbors for simpler model
+numneighbor = max(val.error.means$neighbors)
+numneighbor
+```
+
+```{r KNN_regression-ELA}
 ### ELA
 
 # train the KNN model 
-knnmodel = knnreg(train_x, train_ela)
-str(knnmodel)
-
-# predict on the validation set and check accuracy
-pred_y = predict(knnmodel, data.frame(val_x))
-
-mse = mean((val_ela - pred_y)^2)
-mae = caret::MAE(val_ela, pred_y)
-rmse = caret::RMSE(val_ela, pred_y)
-
-cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
+knnmodel = knnreg(x, y_ela, k=15)
 
 # predict on ravenswood schools
 pred_y = predict(knnmodel, data.frame(test_x))
-print(data.frame(test_ela, pred_y, test_ela-pred_y))
+knn_ela <- data.frame(test_ela, pred_y, test_ela-pred_y)
 
 mse = mean((test_ela - pred_y)^2)
 mae = caret::MAE(test_ela, pred_y)
@@ -487,27 +610,17 @@ cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
 ### Math
 
 # train the KNN model 
-knnmodel_math = knnreg(train_x, train_math)
-str(knnmodel_math)
-
-# predict on the validation set and check accuracy
-pred_y = predict(knnmodel_math, data.frame(val_x))
-
-mse = mean((val_math - pred_y)^2)
-mae = caret::MAE(val_math, pred_y)
-rmse = caret::RMSE(val_math, pred_y)
-
-cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
+knnmodel_math = knnreg(x, y_math, k=15)
 
 # predict on ravenswood schools
 pred_y = predict(knnmodel_math, data.frame(test_x))
-print(data.frame(test_math, pred_y, test_math-pred_y))
+knn_math <- data.frame(test_math, pred_y, test_math-pred_y)
 
 mse = mean((test_math - pred_y)^2)
 mae = caret::MAE(test_math, pred_y)
 rmse = caret::RMSE(test_math, pred_y)
 
-cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
+#cat("MSE: ", mse, "MAE: ", mae, " RMSE: ", rmse)
 ```
 
 ## OLS & LASSO
@@ -557,20 +670,20 @@ best_model_ela <- glmnet(x=as.matrix(df[, -c(1, length(df)-1, length(df))]),
 plot(mod_cv$glmnet.fit, 
      "lambda", label=TRUE)
 ```
-```{r LASSO_plot}
+```{r LASSO_plot_ELA}
 X = as.matrix(df[, -c(1, length(df)-1, length(df))])
 colnames(X) <- c("Size", "%Female", "%FRPL", "%Black", "%American.Indian",
-                                  "%Asian", "%Hispanic", "%White", "%Not.HS", "%IEP", "%2+R",
-                                  "%ELL", "%Filipino", "%Native.H")  
+                 "%Asian", "%Hispanic", "%White", "%Not.HS", "%IEP", 
+                 "%2+R", "%ELL", "%Filipino", "%Native.H")  
 mod <- glmnet(x=X, 
                     y=df[, length(df)-1], 
                     family='gaussian',
                     alpha=1)
 
 library(plotmo) # for plot_glmnet
-png('lasso.png', res=300)
-plot_glmnet(mod, label=8)
-dev.off()
+#png('lasso.png', res=300)
+plot_glmnet(mod, label=5)
+#dev.off()
 
 ```
 
@@ -592,6 +705,24 @@ print(paste(mod_cv$lambda.min,
             log(mod_cv$lambda.min)))
 print(paste(mod_cv$lambda.1se,
             log(mod_cv$lambda.1se)))
+```
+
+
+```{r LASSO_plot_MATH}
+X = as.matrix(df[, -c(1, length(df)-1, length(df))])
+colnames(X) <- c("Size", "%Female", "%FRPL", "%Black", "%American.Indian",
+                 "%Asian", "%Hispanic", "%White", "%Not.HS", "%IEP", 
+                 "%2+R", "%ELL", "%Filipino", "%Native.H")  
+mod <- glmnet(x=X, 
+                    y=df[, length(df)], 
+                    family='gaussian',
+                    alpha=1)
+
+library(plotmo) # for plot_glmnet
+#png('lasso.png', res=300)
+plot_glmnet(mod, label=5)
+#dev.off()
+
 ```
 
 ```{r KNN_reduced}
@@ -634,6 +765,9 @@ fviz_pca_var(res.pca,
 ggsave("pca.png", width = 6, height = 6)
 
 caaspp22_pca = as.data.frame(-res.pca$x[,1:2])
+
+fviz_cos2(res.pca, choice = "var", axes = 1:3)
+fviz_contrib(res.pca, choice = "var", axes = 1:3, top = 10)
 ```
 
 
